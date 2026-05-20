@@ -143,8 +143,7 @@ function Capture.ScanGlyphs()
             if e.spell_id > 0 then numActive = numActive + 1 end
         end
     end
-    Log:Debug("GlyphScan: %d groups, active=%d, %d active glyphs, inactive_available=%s",
-        numGroups, activeGroup, numActive, tostring(result.inactive_spec_available))
+    -- Verbose scan stats available via /chron inspect glyphs
 
     return result
 end

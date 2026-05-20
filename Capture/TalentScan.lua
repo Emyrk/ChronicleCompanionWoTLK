@@ -118,8 +118,8 @@ local function validateTabNames(tabs, unit)
 
     for i = 1, 3 do
         if tabs[i] and expected[i] and tabs[i].name ~= expected[i] then
-            Log:Warn("TalentScan: buffer race detected for %s -- expected tab %d '%s', got '%s'",
-                tostring(unit), i, expected[i], tostring(tabs[i].name))
+            Log:Debug("TalentScan: buffer race for %s -- expected '%s', got '%s' (will retry)",
+                tostring(unit), expected[i], tostring(tabs[i].name))
             return false
         end
     end
@@ -198,8 +198,7 @@ function Capture.ScanTalents(unit, isInspect)
             totalPoints = totalPoints + (tab.points or 0)
         end
     end
-    Log:Debug("TalentScan: %s -- %d groups, active=%d, total points=%d",
-        tostring(unit), numGroups, activeGroup, totalPoints)
+    -- Verbose stats available via /chron inspect talents
 
     return result
 end

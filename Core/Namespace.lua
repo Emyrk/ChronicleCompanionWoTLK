@@ -41,8 +41,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 end)
 
 --- Register a callback for a WoW event.
--- @param event  string  Event name (e.g. "PLAYER_LOGIN")
--- @param fn     function(event, ...) handler
+-- Multiple handlers per event are supported.  Duplicate function
+-- references are silently ignored.
+-- @tparam string event WoW event name (e.g. "PLAYER_LOGIN")
+-- @tparam function fn handler called as fn(event, ...)
 function Chronicle.RegisterEvent(event, fn)
     if not handlers[event] then
         handlers[event] = {}
@@ -59,6 +61,8 @@ end
 --- Unregister a previously registered callback.
 -- When the last handler for an event is removed the engine-level
 -- registration is also dropped.
+-- @tparam string event WoW event name
+-- @tparam function fn the exact function reference passed to RegisterEvent
 function Chronicle.UnregisterEvent(event, fn)
     local list = handlers[event]
     if not list then return end

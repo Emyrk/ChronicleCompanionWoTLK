@@ -221,6 +221,7 @@ Debugging a combat-log-smuggling addon is hard because half the bugs are silent:
 - **No new globals** except `Chronicle`, the two `*DB` SavedVariables, and the `SLASH_*` slots.
 - **Locals up top; module-scope upvalues for hot paths.** The relay's `applyChunk` runs on every cast attempt — keep it allocation-free.
 - **`pcall` every external call site** that runs from an event handler, with a `Logger.warn` on failure. We never crash the user's combat frame.
+- **LDoc annotations on all public functions.** Use `--- @tparam`, `--- @treturn`, `--- @tparam[opt]` for optional params. Every function in `Chronicle.*` or a provider interface must have LDoc tags so IDEs can provide autocomplete and type hints.
 - **Comments explain why, not what.** When something is non-obvious (taint, CLEU arg index, truncation cap, why we picked a specific TTL), drop a multi-line comment with the measurement or source. ALC's `Constants.lua` is the gold standard for this — match that tone.
 - **Constants live in `Core/Constants.lua`, only.** A magic number in a module body is a bug.
 - **No `string.format` in hot paths.** Precompute prefixes in `Constants.lua`; concat once.

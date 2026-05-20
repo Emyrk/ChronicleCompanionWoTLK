@@ -194,8 +194,7 @@ function Capture.ScanLocal()
         captured_at = time(),
         source      = "local",
     }
-    Log:Debug("LocalScan: built CI for %s (%s)",
-        ci.player.name, ci.player.class)
+    -- Verbose CI dump available via /chron inspect ci
     return ci
 end
 
@@ -252,8 +251,7 @@ function Capture.ScanUnit(unit, isInspect)
         if any then ci.arena_teams = teams end
     end
 
-    Log:Debug("LocalScan: built inspect CI for %s (%s)",
-        ci.player.name, ci.player.class)
+    -- Verbose CI dump available via /chron inspect ci
     return ci
 end
 

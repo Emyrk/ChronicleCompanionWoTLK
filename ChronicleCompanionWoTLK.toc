@@ -11,15 +11,26 @@ Core\Namespace.lua
 Core\Constants.lua
 Core\Logger.lua
 Core\Config.lua
+Core\Util.lua
 
 Capture\GearScan.lua
 Capture\TalentScan.lua
 Capture\GlyphScan.lua
+Capture\CIFormat.lua
 Capture\LocalScan.lua
 
 Transport\Relay.lua
 
+Core\AutoLog.lua
+
+Providers\ZoneProvider.lua
+Providers\HeaderProvider.lua
+Providers\PlayerListProvider.lua
+Providers\LootProvider.lua
+Providers\MetaProvider.lua
+
 UI\InspectUI.lua
 UI\SettingsUI.lua
+UI\RelayUI.lua
 
 Init.lua

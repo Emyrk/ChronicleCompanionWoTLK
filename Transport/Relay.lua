@@ -9,7 +9,11 @@
 --
 --   provider.priority  number      lower = polled first
 --   provider:Poll()    string|nil  nil = nothing to send
+--   provider:Dirty()   number      0 = clean, >0 = pending message count
 --   provider:Label()   string      for UI / debug output
+--
+-- Optional:
+--   provider:CreateDebugFrame(parent) -> frame|nil   (for relay UI)
 --
 -- When the relay needs data it walks providers by priority until one
 -- returns a payload.  The payload is chunked on the fly and armed
@@ -33,9 +37,11 @@ local R = Chronicle.Relay
 
 local providers = {}   -- sorted { {priority, provider}, ... }
 
+--- Register a provider with the relay.
+-- @tparam table provider must have .priority (number), :Poll(), :Dirty(), :Label()
 function R:RegisterProvider(provider)
-    if not provider or not provider.Poll or not provider.priority then
-        Log:Warn("Relay: invalid provider (needs .priority and :Poll())")
+    if not provider or not provider.Poll or not provider.priority or not provider.Dirty then
+        Log:Warn("Relay: invalid provider (needs .priority, :Poll(), :Dirty(), :Label())")
         return
     end
     -- Insert sorted by priority (lower first)
@@ -78,6 +84,13 @@ local landedChunks  = 0       -- how many chunks have landed so far
 -- What is currently written into the globals
 local armedChunk    = nil
 
+-- Stashed next message (from bin-pack: payload was consumed but too big
+-- to fit entirely, so its first chunk was partially packed and the rest
+-- continues as the next message)
+local stashedPayload = nil
+local stashedLabel   = nil
+local stashedOffset  = 0    -- bytes already packed into the previous slot
+
 -- Relay on/off
 local active        = false
 local paused        = false   -- manual pause via /clog relay pause
@@ -88,15 +101,141 @@ local metrics = {
     chunks_missed   = 0,
     messages_sent   = 0,
     provider_polls  = 0,
+    last_land_at    = 0,     -- time() of most recent landing
+    last_arm_at     = 0,     -- time() of most recent arm
 }
 
+-- ---------------------------------------------------------------------------
+-- Time-bucketed history (rolling 10 minutes, 1 bucket per minute)
+-- ---------------------------------------------------------------------------
+
+local BUCKET_COUNT = 10
+local BUCKET_SEC   = 60
+local buckets = {}
+local bucketStart = 0  -- time() when current bucket started
+
+local function initBuckets()
+    bucketStart = time()
+    for i = 1, BUCKET_COUNT do
+        buckets[i] = { landed = 0, missed = 0, errors = 0 }
+    end
+end
+initBuckets()
+
+-- Rotate buckets if needed, returns index of current bucket
+local function rotateBuckets()
+    local now = time()
+    local elapsed = now - bucketStart
+    if elapsed < BUCKET_SEC then return 1 end
+
+    local shifts = math.floor(elapsed / BUCKET_SEC)
+    if shifts >= BUCKET_COUNT then
+        -- Everything is stale, reset
+        initBuckets()
+        return 1
+    end
+
+    -- Shift buckets down (oldest falls off the end)
+    for s = 1, shifts do
+        -- Move everything down by 1
+        for i = BUCKET_COUNT, 2, -1 do
+            buckets[i] = buckets[i - 1]
+        end
+        buckets[1] = { landed = 0, missed = 0, errors = 0 }
+    end
+    bucketStart = bucketStart + shifts * BUCKET_SEC
+    return 1
+end
+
+local function recordBucket(field)
+    local idx = rotateBuckets()
+    buckets[idx][field] = buckets[idx][field] + 1
+end
+
+-- ---------------------------------------------------------------------------
+-- Event hook for UI live feed
+-- ---------------------------------------------------------------------------
+
+--- Optional callback the UI can set to receive real-time relay events.
+-- @tparam string eventType one of LANDED, MISSED, ARMED, POLL, ACTIVATED, DEACTIVATED
+-- @tparam string data context string
+R.onRelayEvent = nil
+
+local function fireEvent(eventType, data)
+    if R.onRelayEvent then
+        pcall(R.onRelayEvent, eventType, data or "")
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Public accessors
+-- ---------------------------------------------------------------------------
+
+--- @treturn table metrics counters
 function R:GetMetrics() return metrics end
+--- @treturn bool true if relay is actively hijacking globals
 function R:IsActive() return active end
+--- @treturn bool true if manually paused
 function R:IsPaused() return paused end
+--- @treturn string label of the provider whose message is currently being chunked
 function R:GetActiveLabel() return activeLabel end
+--- @treturn number landed chunks of active message
+--- @treturn number total chunks of active message
 function R:GetActiveProgress()
     if not activePayload then return 0, 0 end
     return landedChunks, totalChunks
+end
+--- @treturn string|nil the exact string currently written into SPELL_FAILED_* globals
+function R:GetArmedChunk() return armedChunk end
+
+--- Return a snapshot of all providers for the UI.
+-- @treturn table array of { label, priority, dirty, lastEmitAt }
+function R:GetProviderStates()
+    local result = {}
+    for i, entry in ipairs(providers) do
+        local p = entry.provider
+        local label = ""
+        local ok, lbl = pcall(p.Label, p)
+        if ok and lbl then label = lbl end
+
+        local dirtyCount = 0
+        local ok2, d = pcall(p.Dirty, p)
+        if ok2 and d then dirtyCount = d end
+
+        local lastEmit = 0
+        -- Providers can expose lastEmitAt via GetState() if they have it
+        if p.GetState then
+            local ok3, st = pcall(p.GetState, p)
+            if ok3 and st and st.lastEmitAt then
+                lastEmit = st.lastEmitAt
+            end
+        end
+
+        result[i] = {
+            label     = label,
+            priority  = entry.priority,
+            dirty     = dirtyCount,
+            lastEmitAt = lastEmit,
+            provider  = p,  -- ref for CreateDebugFrame
+        }
+    end
+    return result
+end
+
+--- Return the time-bucketed history for the UI.
+-- @treturn table array of { landed, missed, errors, minute_ago } (index 1 = current)
+function R:GetBuckets()
+    rotateBuckets()
+    local result = {}
+    for i = 1, BUCKET_COUNT do
+        result[i] = {
+            landed     = buckets[i].landed,
+            missed     = buckets[i].missed,
+            errors     = buckets[i].errors,
+            minute_ago = i - 1,
+        }
+    end
+    return result
 end
 
 -- ---------------------------------------------------------------------------
@@ -128,6 +267,11 @@ local function applyToGlobals(text)
     end
     globalsDirty = true
     armedChunk = text
+    metrics.last_arm_at = time()
+
+    -- Use activeLabel (summary) for the event, not raw payload
+    fireEvent("ARMED", string.format("%s (%d chars, chunk %d/%d)",
+        activeLabel, #(activePayload or ""), landedChunks + 1, totalChunks))
 end
 
 -- ---------------------------------------------------------------------------
@@ -205,16 +349,20 @@ end
 -- ---------------------------------------------------------------------------
 
 --- Poll providers in priority order for a payload.
--- Returns (payload, label) or (nil, nil).
+-- Providers return (payload, summary) from Poll().
+-- summary is a short display string for the UI (e.g. "ZONE Dalaran").
+-- Returns (payload, summary) or (nil, nil).
 local function pollProviders()
     metrics.provider_polls = metrics.provider_polls + 1
     for _, entry in ipairs(providers) do
-        local ok, payload = pcall(entry.provider.Poll, entry.provider)
+        local ok, payload, summary = pcall(entry.provider.Poll, entry.provider)
         if ok and payload and payload ~= "" then
-            local label = "?"
-            local ok2, lbl = pcall(entry.provider.Label, entry.provider)
-            if ok2 and lbl then label = lbl end
-            return payload, label
+            if not summary or summary == "" then
+                -- Fallback: use label
+                local ok2, lbl = pcall(entry.provider.Label, entry.provider)
+                summary = (ok2 and lbl) or "?"
+            end
+            return payload, summary
         elseif not ok then
             Log:Warn("Relay: provider '%s' Poll() error: %s",
                 tostring(entry.provider:Label()), tostring(payload))
@@ -231,8 +379,7 @@ local function startMessage(payload, label)
     chunkOffset   = 0
     totalChunks   = computeChunkCount(payload)
     landedChunks  = 0
-    Log:Debug("Relay: new message [%d] from '%s' (%d chars, %d chunks)",
-        activeCounter, label, #payload, totalChunks)
+    -- Logged via fireEvent("ARMED") instead
 end
 
 -- ---------------------------------------------------------------------------
@@ -249,44 +396,72 @@ end
 local function armNext()
     -- Need a message?
     if not activePayload then
-        local payload, label = pollProviders()
-        if not payload then
-            -- Nothing to send -- restore originals
-            restoreOriginals()
-            return
+        -- Check stash first (from bin-pack: first chunk already landed)
+        if stashedPayload then
+            local p, l, off = stashedPayload, stashedLabel, stashedOffset
+            stashedPayload = nil
+            stashedLabel   = nil
+            stashedOffset  = 0
+            startMessage(p, l)
+            -- Skip past the bytes already packed into the previous slot
+            if off > 0 then
+                chunkOffset = off
+            end
+        else
+            local payload, label = pollProviders()
+            if not payload then
+                -- Nothing to send -- restore originals
+                restoreOriginals()
+                return
+            end
+            startMessage(payload, label)
         end
-        startMessage(payload, label)
     end
 
     local chunk, newOffset, isLast = buildChunk(activePayload, activeCounter, chunkOffset)
 
-    -- Bin-packing: if this is a single-chunk message AND it's short,
-    -- try to append another message into the same slot
-    if isLast and chunkOffset == 0 and #chunk <= C.BIN_PACK_THRESHOLD then
+    -- Bin-packing: if this chunk completes its message AND there's room
+    -- left, fill the remaining space with the start of the next message.
+    -- This works for both short and long next-messages -- we just pack
+    -- as much of the first chunk as fits.
+    if isLast then
         local remainingRoom = FIELD_MAX - #chunk
-        -- We need at least 4 chars for [N + 1 char payload + ]
-        if remainingRoom >= 4 then
+        -- Keep packing while there's room for at least [N + 1 char
+        -- (a partial first chunk of a new message, no ] needed yet)
+        while remainingRoom >= 3 do
             local payload2, label2 = pollProviders()
-            if payload2 then
-                local framedLen = 2 + #payload2 + 1  -- [N + payload + ]
-                if framedLen <= remainingRoom then
-                    -- Fits! Pack it in.
-                    local counter2 = (activeCounter + 1) % (C.MSG_COUNTER_MAX + 1)
-                    local packed = C.MSG_OPEN .. tostring(counter2) .. payload2 .. C.MSG_CLOSE
-                    chunk = chunk .. packed
-                    -- The second message is fully packed, so advance counter
-                    activeCounter = counter2
-                    Log:Debug("Relay: bin-packed '%s' (%d chars) into slot",
-                        label2, #payload2)
-                    -- Note: the first message finishes below (isLast=true),
-                    -- and the packed message is also complete.  Both land
-                    -- in one SPELL_CAST_FAILED event.
-                    metrics.messages_sent = metrics.messages_sent + 1
+            if not payload2 then break end
+
+            local framedLen = 2 + #payload2 + 1  -- [N + payload + ]  (if it fits entirely)
+            if framedLen <= remainingRoom then
+                -- Entire message fits! Pack it complete.
+                local counter2 = (activeCounter + 1) % (C.MSG_COUNTER_MAX + 1)
+                local packed = C.MSG_OPEN .. tostring(counter2) .. payload2 .. C.MSG_CLOSE
+                chunk = chunk .. packed
+                activeCounter = counter2
+                remainingRoom = remainingRoom - #packed
+                metrics.messages_sent = metrics.messages_sent + 1
+            else
+                -- Message too big to fit entirely.  Pack its first chunk
+                -- into the remaining space, stash the rest for continuation.
+                local counter2 = (activeCounter + 1) % (C.MSG_COUNTER_MAX + 1)
+                -- First chunk prefix: [N (2 chars).  No ] since it continues.
+                local prefix = C.MSG_OPEN .. tostring(counter2)
+                local sliceLen = remainingRoom - #prefix
+                if sliceLen >= 1 then
+                    local slice = payload2:sub(1, sliceLen)
+                    chunk = chunk .. prefix .. slice
+                    -- Stash remainder for continuation chunks
+                    stashedPayload = payload2
+                    stashedLabel   = label2
+                    stashedOffset  = sliceLen  -- how much we already packed
                 else
-                    -- Doesn't fit.  The provider returned a payload we can't
-                    -- use yet.  That's fine -- we'll get it on the next poll.
-                    -- (Provider still considers itself dirty.)
+                    -- Can't even fit 1 char -- stash the whole thing
+                    stashedPayload = payload2
+                    stashedLabel   = label2
+                    stashedOffset  = 0
                 end
+                break
             end
         end
     end
@@ -309,12 +484,16 @@ end
 local function onLanding()
     landedChunks = landedChunks + 1
     metrics.chunks_landed = metrics.chunks_landed + 1
+    metrics.last_land_at = time()
+    recordBucket("landed")
+
+    fireEvent("LANDED", string.format("%s (chunk %d/%d)",
+        activeLabel, landedChunks, totalChunks))
 
     -- Was that the last chunk of the active message?
     if chunkOffset >= #(activePayload or "") then
         metrics.messages_sent = metrics.messages_sent + 1
-        Log:Debug("Relay: message [%d] '%s' complete (%d chunks)",
-            activeCounter, activeLabel, totalChunks)
+        -- Logged via fireEvent("LANDED") instead
         activePayload = nil
         activeLabel   = ""
     end
@@ -323,10 +502,13 @@ local function onLanding()
     armNext()
 end
 
-local function onMiss()
+local function onMiss(failedType)
     metrics.chunks_missed = metrics.chunks_missed + 1
+    recordBucket("missed")
     -- Re-arm the same chunk -- it stays in the globals already.
-    -- Nothing to do; the globals still hold our payload.
+    local preview = failedType or ""
+    if #preview > 50 then preview = preview:sub(1, 50) .. "..." end
+    fireEvent("MISSED", preview)
 end
 
 local function onSpellCastFailed(failedType)
@@ -342,7 +524,7 @@ local function onSpellCastFailed(failedType)
     if failedType == armedChunk then
         onLanding()
     else
-        onMiss()
+        onMiss(failedType)
     end
 end
 
@@ -449,6 +631,7 @@ function R:Activate()
     installTaintSuppression()
     active = true
     Log:Debug("Relay: activated")
+    fireEvent("ACTIVATED", "")
     -- Try to arm something immediately
     armNext()
 end
@@ -460,6 +643,16 @@ function R:Deactivate()
     activePayload = nil
     activeLabel   = ""
     Log:Debug("Relay: deactivated")
+    fireEvent("DEACTIVATED", "")
+end
+
+--- Kick the relay -- called by providers when they become dirty.
+-- If the relay is active and idle (nothing armed), polls providers
+-- and arms the first available chunk immediately.
+function R:Kick()
+    if not active or paused then return end
+    if armedChunk then return end  -- already working on something
+    armNext()
 end
 
 function R:Pause()
@@ -500,6 +693,9 @@ function R:InjectTest(text)
         local p = self._payload
         self._payload = nil
         return p
+    end
+    function testProvider:Dirty()
+        return self._payload and 1 or 0
     end
     function testProvider:Label()
         return "Test"

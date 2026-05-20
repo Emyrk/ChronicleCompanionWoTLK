@@ -23,8 +23,11 @@ Chronicle.Config = Config
 -- ---------------------------------------------------------------------------
 
 local ACCOUNT_DEFAULTS = {
-    log_level       = "info",         -- error | warn | info | debug
+    log_level       = "error",        -- error | warn | info | debug
     log_window      = 1,              -- ChatFrame index (1-10)
+    auto_combatlog_raid    = true,    -- auto-enable LoggingCombat in raids
+    auto_combatlog_dungeon = true,   -- auto-enable LoggingCombat in dungeons
+    auto_relay      = true,           -- auto-activate relay in instances
 }
 
 local CHAR_DEFAULTS = {

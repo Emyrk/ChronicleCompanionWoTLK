@@ -148,7 +148,7 @@ function Capture.ScanGear(unit)
         end
     end
 
-    Log:Debug("GearScan: %s -- %d/%d slots filled", tostring(unit), count, NUM_SLOTS)
+    -- Verbose stats available via /chron inspect gear
     return gear
 end
 

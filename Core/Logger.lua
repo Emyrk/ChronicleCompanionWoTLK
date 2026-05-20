@@ -72,13 +72,28 @@ end
 -- Public API
 -- ---------------------------------------------------------------------------
 
+--- Log an error.  Always prints.  Also feeds geterrorhandler().
+-- @tparam string msg format string (or plain message)
+-- @param ... format arguments
 function Logger:Error(msg, ...) emit("error", msg, ...) end
+
+--- Log a warning.  Prints at warn level or above.
+-- @tparam string msg format string
+-- @param ... format arguments
 function Logger:Warn(msg, ...)  emit("warn",  msg, ...) end
+
+--- Log an informational message.  Prints at info level or above.
+-- @tparam string msg format string
+-- @param ... format arguments
 function Logger:Info(msg, ...)  emit("info",  msg, ...) end
+
+--- Log a debug message.  Only prints when log level is "debug".
+-- @tparam string msg format string
+-- @param ... format arguments
 function Logger:Debug(msg, ...) emit("debug", msg, ...) end
 
 --- Set the active log level.
--- @param name  string  One of "error", "warn", "info", "debug"
+-- @tparam string name one of "error", "warn", "info", "debug"
 function Logger:SetLevel(name)
     name = (name or ""):lower()
     if not LEVELS[name] then
@@ -91,12 +106,13 @@ function Logger:SetLevel(name)
 end
 
 --- Return the current log level name.
+-- @treturn string current level ("error", "warn", "info", or "debug")
 function Logger:GetLevel()
     return currentLevelName
 end
 
 --- Set the chat frame all output goes to.
--- @param frame  Frame  Any object with :AddMessage (e.g. ChatFrame2)
+-- @tparam Frame frame any object with :AddMessage (e.g. ChatFrame2)
 function Logger:SetChatFrame(frame)
     if frame and frame.AddMessage then
         chatFrame = frame
@@ -107,6 +123,7 @@ function Logger:SetChatFrame(frame)
 end
 
 --- Return the currently active chat frame.
+-- @treturn Frame the frame receiving log output
 function Logger:GetChatFrame()
     return getChatFrame()
 end
