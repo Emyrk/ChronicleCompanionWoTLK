@@ -232,6 +232,9 @@ local function buildFrame()
         else
             LoggingCombat(true)
         end
+        if Chronicle.Relay then
+            Chronicle.Relay:Reevaluate()
+        end
         refresh()
     end)
     toggleBtn:SetPoint("LEFT", loggingText, "RIGHT", 8, 0)

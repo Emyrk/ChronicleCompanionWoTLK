@@ -67,11 +67,19 @@ function P:Poll()
         total = total + landed
     end
 
+    -- Count total dirty across all providers
+    local totalDirty = 0
+    local provStates = Relay:GetProviderStates()
+    for _, s in ipairs(provStates) do
+        totalDirty = totalDirty + (s.dirty or 0)
+    end
+
     dirty = false
     lastEmitAt = now
 
-    local payload = "M" .. table.concat(parts, ",")
-    local summary = string.format("META %d landed/10m", total)
+    -- Format: M<dirty>,<landed_0>,<landed_1>,...,<landed_9>
+    local payload = "M" .. totalDirty .. "," .. table.concat(parts, ",")
+    local summary = string.format("META d:%d %d landed/10m", totalDirty, total)
 
     return payload, summary
 end

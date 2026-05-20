@@ -43,6 +43,7 @@ local QUALITY_RARE      = 3
 local queue = {}   -- array of { quality, itemId, count, player, pushed_at, kind }
 local MAX_QUEUE = 50
 local lootedItemIds = {}   -- set of item IDs that dropped this session (for trade tracking)
+local recentLoot = {}      -- dedup: "itemId:player:count" -> time() (expires after 5s)
 
 --- Insert a loot entry sorted by quality (highest first).
 local function enqueue(entry)
@@ -165,6 +166,22 @@ local function onLootMsg(event, msg, playerName)
 
     local count = extractCount(msg)
 
+    -- Dedup: CHAT_MSG_LOOT fires once per group member who sees the loot.
+    -- Ignore duplicates of the same item+player+count within 5 seconds.
+    local dedupKey = itemId .. ":" .. player .. ":" .. count
+    local now = time()
+    if recentLoot[dedupKey] and (now - recentLoot[dedupKey]) < 5 then
+        return
+    end
+    recentLoot[dedupKey] = now
+
+    -- Clean old dedup entries (lazy, on each new loot)
+    for k, t in pairs(recentLoot) do
+        if (now - t) >= 5 then
+            recentLoot[k] = nil
+        end
+    end
+
     lootedItemIds[itemId] = true  -- remember this item dropped
 
     enqueue({
@@ -180,89 +197,14 @@ local function onLootMsg(event, msg, playerName)
 end
 
 -- ---------------------------------------------------------------------------
--- Trade tracking
---
--- On TRADE_ACCEPT_UPDATE (both sides accept), snapshot the items in the
--- trade window.  Only record items whose IDs were seen as loot drops
--- this session.
---
--- TRADE_ACCEPT_UPDATE fires with (playerAccepted, targetAccepted).
--- We capture when both are 1.
---
--- APIs:
---   GetTradePlayerItemLink(slot)  -- items we're giving (1-7)
---   GetTradeTargetItemLink(slot)  -- items we're receiving (1-7)
---   GetTradePlayerItemInfo(slot)  -- name, texture, numItems, isUsable, enchantment
---   GetTradeTargetItemInfo(slot)  -- name, texture, numItems, quality, isUsable, enchantment
--- ---------------------------------------------------------------------------
-
-local MAX_TRADE_SLOTS = 7
-
-local function onTradeAccept(event, playerAccepted, targetAccepted)
-    if playerAccepted ~= 1 or targetAccepted ~= 1 then return end
-
-    local myName = UnitName("player") or "?"
-    local targetName = UnitName("NPC") or GetTradeTargetName and GetTradeTargetName() or "?"
-    -- On 3.3.5a, trade target name might come from the TradeFrame title
-    if targetName == "?" and TradeFrameRecipientNameText then
-        targetName = TradeFrameRecipientNameText:GetText() or "?"
-    end
-
-    -- Items we gave away (other player receives them)
-    for slot = 1, MAX_TRADE_SLOTS do
-        local link = GetTradePlayerItemLink(slot)
-        if link then
-            local itemId = tonumber(link:match("item:(%d+)"))
-            if itemId and lootedItemIds[itemId] then
-                local _, _, numItems = GetTradePlayerItemInfo(slot)
-                local _, _, quality = GetItemInfo(link)
-                if quality and quality >= MIN_QUALITY then
-                    enqueue({
-                        quality   = quality,
-                        itemId    = itemId,
-                        count     = numItems or 1,
-                        player    = myName .. ">" .. Util.Sanitize(targetName),
-                        pushed_at = time(),
-                        kind      = "T",  -- trade
-                    })
-                end
-            end
-        end
-    end
-
-    -- Items we received (we get them)
-    for slot = 1, MAX_TRADE_SLOTS do
-        local link = GetTradeTargetItemLink(slot)
-        if link then
-            local itemId = tonumber(link:match("item:(%d+)"))
-            if itemId and lootedItemIds[itemId] then
-                local _, _, numItems, quality = GetTradeTargetItemInfo(slot)
-                if not quality then
-                    _, _, quality = GetItemInfo(link)
-                end
-                if quality and quality >= MIN_QUALITY then
-                    enqueue({
-                        quality   = quality,
-                        itemId    = itemId,
-                        count     = numItems or 1,
-                        player    = Util.Sanitize(targetName) .. ">" .. myName,
-                        pushed_at = time(),
-                        kind      = "T",  -- trade
-                    })
-                end
-            end
-        end
-    end
-
-    Relay:Kick()
-end
-
--- ---------------------------------------------------------------------------
 -- Event wiring
+--
+-- CHAT_MSG_LOOT covers both loot drops AND trade receives
+-- ("Person receives item" fires for trades too).  No need for a
+-- separate TRADE_ACCEPT_UPDATE handler.
 -- ---------------------------------------------------------------------------
 
 Chronicle.RegisterEvent("CHAT_MSG_LOOT", onLootMsg)
-Chronicle.RegisterEvent("TRADE_ACCEPT_UPDATE", onTradeAccept)
 
 -- Wipe the seen-item-IDs list on zone change (new instance = fresh tracking)
 Chronicle.RegisterEvent("ZONE_CHANGED_NEW_AREA", function()

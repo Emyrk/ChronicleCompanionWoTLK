@@ -27,14 +27,14 @@ local P = {
 -- ---------------------------------------------------------------------------
 
 local SEGMENT_DEFS = {
-    { key = "I", priority = 1, cooldown = 1800, selfOnly = false },  -- Identity, 30 min
-    { key = "G", priority = 2, cooldown = 300,  selfOnly = false },  -- Gear, 5 min
-    { key = "T", priority = 3, cooldown = 300,  selfOnly = false },  -- Talents, 5 min
-    { key = "Y", priority = 4, cooldown = 600,  selfOnly = true  },  -- Glyphs, 10 min
-    { key = "U", priority = 5, cooldown = 1800, selfOnly = false },  -- Guild, 30 min
-    { key = "E", priority = 6, cooldown = 600,  selfOnly = false },  -- Pet, 10 min
-    { key = "H", priority = 7, cooldown = 7200, selfOnly = true  },  -- Honor, 60 min
-    { key = "A", priority = 8, cooldown = 7200, selfOnly = true  },  -- Arena, 60 min
+    { key = "I", priority = 1, cooldown = 1800, selfOnly = false  },  -- Identity, 30 min
+    { key = "G", priority = 2, cooldown = 1200,  selfOnly = false }, -- Gear, 20 min
+    { key = "T", priority = 3, cooldown = 300,  selfOnly = false  },  -- Talents, 5 min
+    { key = "Y", priority = 4, cooldown = 7200,  selfOnly = true  }, -- Glyphs, 2 hours
+    { key = "U", priority = 5, cooldown = 3600, selfOnly = false  },  -- Guild, 1 hr
+    { key = "E", priority = 6, cooldown = 600,  selfOnly = false  },  -- Pet, 10 min
+    { key = "H", priority = 7, cooldown = 7200, selfOnly = true   },  -- Honor, 60 min
+    { key = "A", priority = 8, cooldown = 7200, selfOnly = true   },  -- Arena, 60 min
 }
 
 -- Lookup for fast access

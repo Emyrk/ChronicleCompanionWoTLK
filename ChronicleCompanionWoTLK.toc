@@ -29,6 +29,7 @@ Providers\PlayerListProvider.lua
 Providers\LootProvider.lua
 Providers\MetaProvider.lua
 
+UI\MinimapButton.lua
 UI\InspectUI.lua
 UI\SettingsUI.lua
 UI\RelayUI.lua

@@ -318,15 +318,17 @@ Emitted by: `MetaProvider` (priority 5)
 Re-emit: every 5 minutes
 
 ```
-M<landed_0>,<landed_1>,<landed_2>,...,<landed_9>
+M<dirty>,<landed_0>,<landed_1>,<landed_2>,...,<landed_9>
 ```
 
-10 values representing landed chunk counts per minute bucket.
-Index 0 = current minute, index 9 = 9 minutes ago.
+| Field | Type | Description |
+|-------|------|-------------|
+| dirty | number | Total dirty segment count across all providers at emit time |
+| landed_0..9 | number | Landed chunk counts per minute bucket (0 = current, 9 = 9 min ago) |
 
 Example:
 ```
-M12,8,15,3,0,0,0,0,0,0
+M5,12,8,15,3,0,0,0,0,0,0
 ```
 
 ---

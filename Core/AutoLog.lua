@@ -82,7 +82,13 @@ local function evaluate()
             Relay:Deactivate()
         end
 
-        Log:Info("Left instance (combat logging left on)")
+        -- Turn off combat logging if we auto-enabled it
+        if LoggingCombat() then
+            LoggingCombat(false)
+            Log:Info("Left instance - combat logging OFF")
+        else
+            Log:Info("Left instance")
+        end
     end
 end
 
