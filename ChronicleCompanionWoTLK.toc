@@ -1,10 +1,25 @@
 ## Interface: 30300
 ## Title: ChronicleCompanionWoTLK
-## Notes: Companion addon for ChronicleClassic.com — WotLK 3.3.5a
+## Notes: Companion addon for ChronicleClassic.com - WotLK 3.3.5a
 ## Version: 0.1
 ## DefaultState: enabled
 ## Author: Emyrk
 ## SavedVariables: ChronicleCompanionWoTLKDB
 ## SavedVariablesPerCharacter: ChronicleCompanionWoTLKCharDB
 
-DispatchProbe.lua
+Core\Namespace.lua
+Core\Constants.lua
+Core\Logger.lua
+Core\Config.lua
+
+Capture\GearScan.lua
+Capture\TalentScan.lua
+Capture\GlyphScan.lua
+Capture\LocalScan.lua
+
+Transport\Relay.lua
+
+UI\InspectUI.lua
+UI\SettingsUI.lua
+
+Init.lua

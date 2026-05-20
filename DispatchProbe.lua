@@ -139,6 +139,17 @@ local function disarm()
     Print("disarmed; originals restored.")
 end
 
+local function probeDump()
+    for _, name in ipairs(HIJACK_GLOBALS) do
+        Print(name .. " = " .. tostring(_G[name]))
+    end
+end
+
+-- Export probe functions so LocalScan.lua's slash handler can pass through.
+Chronicle._probeArm    = arm
+Chronicle._probeDisarm = disarm
+Chronicle._probeDump   = probeDump
+
 -- ---------------------------------------------------------------------------
 -- Combat-log echo: confirm our payload actually landed
 --
