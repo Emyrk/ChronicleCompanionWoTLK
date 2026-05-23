@@ -1,7 +1,7 @@
 ## Interface: 30300
 ## Title: ChronicleCompanionWoTLK
 ## Notes: Companion addon for ChronicleClassic.com - WotLK 3.3.5a
-## Version: 0.1
+## Version: 0.2
 ## DefaultState: enabled
 ## Author: Emyrk
 ## SavedVariables: ChronicleCompanionWoTLKDB

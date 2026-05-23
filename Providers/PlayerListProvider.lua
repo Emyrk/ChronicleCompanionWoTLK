@@ -28,7 +28,7 @@ local P = {
 
 local SEGMENT_DEFS = {
     { key = "I", priority = 1, cooldown = 1800, selfOnly = false  },  -- Identity, 30 min
-    { key = "G", priority = 2, cooldown = 1200,  selfOnly = false }, -- Gear, 20 min
+    { key = "G", priority = 2, cooldown = 1800,  selfOnly = false }, -- Gear, 30 min
     { key = "T", priority = 3, cooldown = 300,  selfOnly = false  },  -- Talents, 5 min
     { key = "Y", priority = 4, cooldown = 7200,  selfOnly = true  }, -- Glyphs, 2 hours
     { key = "U", priority = 5, cooldown = 3600, selfOnly = false  },  -- Guild, 1 hr
@@ -630,16 +630,19 @@ end
 -- ---------------------------------------------------------------------------
 
 --- Refresh the tracked player list from the current party/raid roster.
+-- @treturn table list of newly-added GUIDs (already fully dirty via newPlayer)
+-- @treturn table list of removed GUIDs (no longer tracked)
 local function refreshRoster()
     selfGuid = UnitGUID("player")
-    if not selfGuid then return end
+    if not selfGuid then return {}, {} end
 
-    -- Mark all existing entries as stale (will be re-confirmed or removed)
     local seen = {}
+    local added, removed = {}, {}
 
     -- Always track self
     if not players[selfGuid] then
         players[selfGuid] = newPlayer(selfGuid, "player", true)
+        added[#added + 1] = selfGuid
         Log:Debug("PlayerList: tracking self %s", selfGuid)
     else
         players[selfGuid].unit = "player"
@@ -655,6 +658,7 @@ local function refreshRoster()
             seen[guid] = true
             if not players[guid] then
                 players[guid] = newPlayer(guid, unit, false)
+                added[#added + 1] = guid
                 Log:Debug("PlayerList: tracking %s (%s)", UnitName(unit) or "?", unit)
             else
                 players[guid].unit = unit
@@ -672,6 +676,7 @@ local function refreshRoster()
                 seen[guid] = true
                 if not players[guid] then
                     players[guid] = newPlayer(guid, unit, false)
+                    added[#added + 1] = guid
                     Log:Debug("PlayerList: tracking %s (%s)", UnitName(unit) or "?", unit)
                 else
                     players[guid].unit = unit
@@ -685,8 +690,11 @@ local function refreshRoster()
         if not seen[guid] then
             Log:Debug("PlayerList: removing %s (left group)", guid)
             players[guid] = nil
+            removed[#removed + 1] = guid
         end
     end
+
+    return added, removed
 end
 
 -- ---------------------------------------------------------------------------
@@ -773,14 +781,18 @@ Chronicle.RegisterEvent("INSPECT_TALENT_READY", function()
     Relay:Kick()
 end)
 
--- Roster changed: refresh roster and mark ALL players dirty
--- (new group composition = server needs fresh data for everyone)
+-- Roster changed: refresh the tracked list and only react to real composition
+-- changes. RAID_ROSTER_UPDATE / PARTY_MEMBERS_CHANGED fire for assist/loot/
+-- ready-check toggles too, so blanket-dirtying every player here would re-emit
+-- the entire raid's CI on every flag flip. Newly-added players are already
+-- fully dirty via newPlayer(); existing players keep their segment state and
+-- rely on per-segment cooldowns for periodic refresh.
 local function onRosterChanged()
-    refreshRoster()
-    for _, pl in pairs(players) do
-        markPlayerAllDirty(pl.guid, "roster changed")
+    local added, removed = refreshRoster()
+    if (added and #added > 0) or (removed and #removed > 0) then
+        Log:Debug("PlayerList: roster delta +%d -%d", #added, #removed)
+        Relay:Kick()
     end
-    Relay:Kick()
 end
 -- 3.3.5a roster events (GROUP_ROSTER_UPDATE does not exist on this client)
 Chronicle.RegisterEvent("RAID_ROSTER_UPDATE", onRosterChanged)
