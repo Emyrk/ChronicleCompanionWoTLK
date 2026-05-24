@@ -21,7 +21,7 @@ local Log   = Chronicle.Logger
 local Relay = Chronicle.Relay
 
 local P = {
-    priority = 5,
+    priority = 6,
 }
 
 -- ---------------------------------------------------------------------------

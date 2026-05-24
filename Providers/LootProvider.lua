@@ -24,7 +24,7 @@ local Relay = Chronicle.Relay
 local Util  = Chronicle.Util
 
 local P = {
-    priority = 4,   -- lowest: after Zone (1), Header (2), PlayerList (3)
+    priority = 5,   -- after Reset (1), Zone (2), Header (3), PlayerList (4)
 }
 
 -- ---------------------------------------------------------------------------

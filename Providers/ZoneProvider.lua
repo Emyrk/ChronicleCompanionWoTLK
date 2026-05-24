@@ -21,7 +21,7 @@ local Log    = Chronicle.Logger
 local Relay  = Chronicle.Relay
 
 local P = {
-    priority = 1,   -- highest priority (cheap, 1 chunk, critical context)
+    priority = 2,   -- after Reset (1); cheap, 1 chunk, critical context
 }
 
 -- ---------------------------------------------------------------------------

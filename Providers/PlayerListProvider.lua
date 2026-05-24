@@ -18,7 +18,7 @@ local Format  = Chronicle.CIFormat
 local Util    = Chronicle.Util
 
 local P = {
-    priority = 3,
+    priority = 4,
 }
 
 -- ---------------------------------------------------------------------------
