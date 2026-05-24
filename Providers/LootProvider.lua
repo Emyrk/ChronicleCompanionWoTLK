@@ -70,28 +70,50 @@ end
 -- ---------------------------------------------------------------------------
 -- Parse CHAT_MSG_LOOT
 --
--- The message arg contains the localized loot string with an item link.
--- We extract the item link, then use GetItemInfo for quality + item ID.
--- The player name comes from arg2 (or is "You" for self-loot patterns).
+-- CHAT_MSG_LOOT fires for far more than just "receives loot:" messages --
+-- it also carries every Need / Greed / Pass click, every roll result,
+-- and every "You won:" announcement, all of which contain the same item
+-- link.  Accepting "any message that has an item link" produced 2-6x
+-- phantom records per real drop because the player name differs across
+-- those messages (roller, winner, looter) so itemId:player:count dedup
+-- never collides.
+--
+-- We allowlist exactly the four corpse-loot receive formats from
+-- GlobalStrings.lua:
+--   LOOT_ITEM                = "%s receives loot: %s."
+--   LOOT_ITEM_MULTIPLE       = "%s receives loot: %sx%d."
+--   LOOT_ITEM_SELF           = "You receive loot: %s."
+--   LOOT_ITEM_SELF_MULTIPLE  = "You receive loot: %sx%d."
+-- Everything else -- LOOT_ROLL_*, LOOT_ITEM_CREATED_SELF*,
+-- LOOT_ITEM_PUSHED_SELF* (quest reward / mail / merchant) -- is dropped
+-- at the source.  Patterns are built from the live globals so localized
+-- clients work without code changes.
 -- ---------------------------------------------------------------------------
 
---- Extract item link from a loot message string.
--- @tparam string msg the chat message text
--- @treturn string|nil the item link if found
-local function extractItemLink(msg)
-    if not msg then return nil end
-    -- Item links look like: |cff......|Hitem:12345:...|h[Name]|h|r
-    return msg:match("|H(item:[%d:%-]+)|h")
+--- Convert a GlobalStrings.lua format string into a Lua match pattern.
+-- %s placeholders become (.-) captures; %d placeholders become (%d+)
+-- captures.  All other Lua pattern magic in the format string is
+-- escaped so it matches literally.
+-- @tparam string fmt the format string (e.g. "%s receives loot: %s.")
+-- @treturn string an anchored Lua pattern with capture groups
+local function toPattern(fmt)
+    -- Step 1: protect %s / %d placeholders with sentinel bytes that
+    -- cannot appear in a chat message.
+    local s = fmt:gsub("%%s", "\1"):gsub("%%d", "\2")
+    -- Step 2: escape Lua pattern magic in the remaining literal text.
+    s = s:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+    -- Step 3: restore the placeholders as captures.
+    s = s:gsub("\1", "(.-)"):gsub("\2", "(%%d+)")
+    return "^" .. s .. "$"
 end
 
---- Extract item count from a loot message (e.g. "x3").
--- @tparam string msg the chat message text
--- @treturn number count (default 1)
-local function extractCount(msg)
-    if not msg then return 1 end
-    local count = msg:match("x(%d+)")
-    return tonumber(count) or 1
-end
+-- Multi-stack variants MUST be checked before single-stack -- otherwise
+-- the single-stack pattern's trailing %. captures "[Item]xN" as the
+-- whole link.
+local PAT_OTHER_MULTIPLE = LOOT_ITEM_MULTIPLE      and toPattern(LOOT_ITEM_MULTIPLE)      or nil
+local PAT_SELF_MULTIPLE  = LOOT_ITEM_SELF_MULTIPLE and toPattern(LOOT_ITEM_SELF_MULTIPLE) or nil
+local PAT_OTHER          = LOOT_ITEM              and toPattern(LOOT_ITEM)               or nil
+local PAT_SELF           = LOOT_ITEM_SELF         and toPattern(LOOT_ITEM_SELF)          or nil
 
 -- ---------------------------------------------------------------------------
 -- Provider interface
@@ -145,9 +167,30 @@ end
 -- Event handler
 -- ---------------------------------------------------------------------------
 
-local function onLootMsg(event, msg, playerName)
-    local itemLink = extractItemLink(msg)
-    if not itemLink then return end
+local function onLootMsg(event, msg)
+    if not msg then return end
+
+    -- Allowlist match: only accept the four corpse-loot receive formats.
+    -- Multi-stack variants checked first so the single-stack patterns
+    -- don't greedy-capture "[Item]xN" as the whole link.
+    local player, itemLink, count
+    if PAT_OTHER_MULTIPLE then
+        local p, l, c = msg:match(PAT_OTHER_MULTIPLE)
+        if p then player, itemLink, count = p, l, tonumber(c) or 1 end
+    end
+    if not player and PAT_SELF_MULTIPLE then
+        local l, c = msg:match(PAT_SELF_MULTIPLE)
+        if l then player, itemLink, count = UnitName("player") or "?", l, tonumber(c) or 1 end
+    end
+    if not player and PAT_OTHER then
+        local p, l = msg:match(PAT_OTHER)
+        if p then player, itemLink, count = p, l, 1 end
+    end
+    if not player and PAT_SELF then
+        local l = msg:match(PAT_SELF)
+        if l then player, itemLink, count = UnitName("player") or "?", l, 1 end
+    end
+    if not player then return end  -- not a receive-loot message
 
     -- Get item info: name, link, quality, ...
     local itemName, _, quality = GetItemInfo(itemLink)
@@ -157,17 +200,10 @@ local function onLootMsg(event, msg, playerName)
     local itemId = tonumber(itemLink:match("item:(%d+)"))
     if not itemId then return end
 
-    -- Player name: CHAT_MSG_LOOT arg2 is the sender name.
-    -- For self-loot patterns, playerName might be "" or the player's name.
-    local player = playerName or ""
-    if player == "" then
-        player = UnitName("player") or "?"
-    end
-
-    local count = extractCount(msg)
-
-    -- Dedup: CHAT_MSG_LOOT fires once per group member who sees the loot.
-    -- Ignore duplicates of the same item+player+count within 5 seconds.
+    -- Dedup: defense-in-depth against an engine re-fire of the same
+    -- LOOT_ITEM line.  Most cross-message duplication is already gone
+    -- via the allowlist above; this 5s window only catches a literal
+    -- repeat of the same accepted message.
     local dedupKey = itemId .. ":" .. player .. ":" .. count
     local now = time()
     if recentLoot[dedupKey] and (now - recentLoot[dedupKey]) < 5 then
@@ -199,9 +235,11 @@ end
 -- ---------------------------------------------------------------------------
 -- Event wiring
 --
--- CHAT_MSG_LOOT covers both loot drops AND trade receives
--- ("Person receives item" fires for trades too).  No need for a
--- separate TRADE_ACCEPT_UPDATE handler.
+-- We only register for CHAT_MSG_LOOT.  The allowlist patterns above
+-- exclude trade pushes (LOOT_ITEM_PUSHED_SELF*) and crafted items
+-- (LOOT_ITEM_CREATED_SELF*) -- the previous trade handler was removed
+-- in 9576e07; lootedItemIds maintenance below is currently dead but
+-- harmless.
 -- ---------------------------------------------------------------------------
 
 Chronicle.RegisterEvent("CHAT_MSG_LOOT", onLootMsg)
