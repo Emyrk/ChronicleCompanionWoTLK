@@ -9,10 +9,17 @@
 -- Dirty at session start and every 30 minutes.
 --
 -- Payload format:
---   H:<addonVersion>,<realm>,<locale>,<wowVersion>,<wowBuild>,<sessionId>
+--   H:<addonVersion>,<realm>,<locale>,<wowVersion>,<wowBuild>,<sessionId>,<localEpoch>,<utcOffsetMin>
 --
 -- Example:
---   H:0.1,Icecrown,enUS,3.3.5a,12340,a8f3
+--   H:0.1,Icecrown,enUS,3.3.5a,12340,a8f3,1716508800,-420
+--
+-- localEpoch:    time() at emit, in seconds. Combat-log row timestamps are in
+--                local wall-clock time; pairing the row timestamp with this
+--                value (and the offset below) lets the server recover UTC.
+-- utcOffsetMin:  signed minutes east of UTC. PDT = -420, UTC = 0, CEST = +120.
+--                Demuxer disambiguates legacy (6 fields) from new (8 fields)
+--                by counting commas; tag stays "H:".
 --
 -- Session ID is a short random hex string generated once per login.
 -- It lets the server detect /reload boundaries within the same log file.
@@ -39,6 +46,29 @@ local sessionId   = nil        -- generated on PLAYER_LOGIN
 local Util = Chronicle.Util
 
 -- ---------------------------------------------------------------------------
+-- UTC offset helper
+-- ---------------------------------------------------------------------------
+--
+-- Lua 5.1 has no direct "local TZ offset" API.  Standard trick: take the
+-- current epoch, format it as a UTC broken-down table with date("!*t"), then
+-- feed that table back through time() -- which interprets it as *local* time.
+-- The delta is (local - UTC) in seconds.  difftime() handles platforms where
+-- time_t isn't a plain number; fall back to subtraction if it's missing.
+local function computeUtcOffsetMinutes()
+    local now = time()
+    local utc = date("!*t", now)
+    utc.isdst = false
+    local utcAsLocal = time(utc)
+    local diff
+    if type(difftime) == "function" then
+        diff = difftime(now, utcAsLocal)
+    else
+        diff = now - utcAsLocal
+    end
+    return math.floor(diff / 60 + 0.5)
+end
+
+-- ---------------------------------------------------------------------------
 -- Build payload from current game state
 -- ---------------------------------------------------------------------------
 
@@ -57,9 +87,13 @@ local function buildPayload()
 
     local sid = sessionId or "0000"
 
-    -- Format: H:<addonVersion>,<realm>,<locale>,<wowVersion>,<wowBuild>,<sessionId>
-    return string.format("H:%s,%s,%s,%s,%s,%s",
-        addonVersion, realm, locale, wowVersion, wowBuild, sid)
+    local localEpoch   = time()
+    local utcOffsetMin = computeUtcOffsetMinutes()
+
+    -- Format: H:<addonVersion>,<realm>,<locale>,<wowVersion>,<wowBuild>,<sessionId>,<localEpoch>,<utcOffsetMin>
+    return string.format("H:%s,%s,%s,%s,%s,%s,%d,%d",
+        addonVersion, realm, locale, wowVersion, wowBuild, sid,
+        localEpoch, utcOffsetMin)
 end
 
 -- ---------------------------------------------------------------------------
