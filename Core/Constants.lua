@@ -33,6 +33,11 @@ Chronicle.C = {
     BIN_PACK_THRESHOLD = 230,  -- if framed msg <= this, try packing another
 
     -- -----------------------------------------------------------------
+    -- Scan / retry timing
+    -- -----------------------------------------------------------------
+    IDENTITY_RETRY_SEC = 3,    -- fast re-poll when UnitName/UnitClass return nil
+
+    -- -----------------------------------------------------------------
     -- CLEU constants
     -- -----------------------------------------------------------------
     RELAY_FAILEDTYPE_ARG = 12, -- select(12, ...) in SPELL_CAST_FAILED

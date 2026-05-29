@@ -11,6 +11,7 @@
 -- Priority 3 (after Zone and Header).
 -- =============================================================================
 
+local C       = Chronicle.C
 local Log     = Chronicle.Logger
 local Relay   = Chronicle.Relay
 local Capture = Chronicle.Capture
@@ -152,12 +153,25 @@ local function formatSegment(pl, key)
 
     if key == "I" then
         -- Identity: lightweight, always available for visible units
+        local name  = UnitName(unit) or ""
+        local class = select(2, UnitClass(unit)) or ""
+        local race  = select(2, UnitRace(unit)) or ""
+        local sex   = UnitSex(unit) or 0
+        local level = UnitLevel(unit) or 0
+
+        -- If core fields are missing the unit is still loading / phased.
+        -- Return nil + retry flag so Poll() schedules a fast re-check
+        -- instead of emitting an empty identity for 30 minutes.
+        if name == "" or class == "" then
+            return nil, true   -- retry flag
+        end
+
         local ci = { player = {
-            name   = UnitName(unit) or "",
-            class  = select(2, UnitClass(unit)) or "",
-            race   = select(2, UnitRace(unit)) or "",
-            gender = UnitSex(unit) or 0,
-            level  = UnitLevel(unit) or 0,
+            name   = name,
+            class  = class,
+            race   = race,
+            gender = sex,
+            level  = level,
         }}
         return Format.Identity(ci)
 
@@ -363,8 +377,18 @@ function P:Poll()
                         tryInspect(pl)
                     else
                         -- Snapshot + format
-                        local segment = formatSegment(pl, def.key)
-                        if not segment then
+                        local segment, retry = formatSegment(pl, def.key)
+                        if retry then
+                            -- Unit info unavailable (loading/phased).
+                            -- Schedule a fast re-check instead of waiting
+                            -- the full cooldown.  Keep seg.dirty true and
+                            -- nudge lastEmitAt so segmentIsDue() fires
+                            -- again after IDENTITY_RETRY_SEC.
+                            seg.lastEmitAt = time() - seg.cooldown + C.IDENTITY_RETRY_SEC
+                            Log:Debug("PlayerList: %s.%s retry in %ds (unit not ready)",
+                                UnitName(pl.unit) or pl.guid, def.key, C.IDENTITY_RETRY_SEC)
+                            -- fall through to next segment / player
+                        elseif not segment then
                             -- Nothing to emit (e.g. no pet, no arena teams).
                             -- Mark clean so we don't keep retrying every Poll.
                             seg.dirty = false
@@ -751,6 +775,16 @@ Chronicle.RegisterEvent("UNIT_PET", function(event, unit)
         markSegDirty(selfGuid, "E", "UNIT_PET")
         Relay:Kick()
     end
+end)
+
+-- Unit name/info became available (loading finished, came into range, etc.)
+Chronicle.RegisterEvent("UNIT_NAME_UPDATE", function(event, unit)
+    local guid = UnitGUID(unit)
+    if not guid then return end
+    local pl = players[guid]
+    if not pl then return end
+    markSegDirty(guid, "I", "UNIT_NAME_UPDATE")
+    Relay:Kick()
 end)
 
 -- Guild changed
