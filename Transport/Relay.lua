@@ -715,10 +715,8 @@ end
 local function onCLEU(event, ...)
     local subevent = select(2, ...)
     if subevent ~= "SPELL_CAST_FAILED" then return end
-
-    local sourceGUID = select(3, ...)
-    if sourceGUID ~= UnitGUID("player") then return end
-
+    -- All players' failures carry our hijacked globals on this client.
+    -- Accept any source to maximize landing throughput in raids.
     local failedType = select(C.RELAY_FAILEDTYPE_ARG, ...)
     if failedType then
         onSpellCastFailed(failedType)
