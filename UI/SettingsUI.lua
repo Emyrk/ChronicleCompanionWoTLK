@@ -126,9 +126,7 @@ local function refresh()
     -- Relay status
     local Relay = Chronicle.Relay
     if Relay then
-        if Relay:IsPaused() then
-            relayText:SetText("Relay: |cffffff00PAUSED|r")
-        elseif Relay:IsActive() then
+        if Relay:IsActive() then
             relayText:SetText("Relay: |cff44ff44ACTIVE|r")
         else
             relayText:SetText("Relay: |cffff4444INACTIVE|r")
@@ -287,10 +285,6 @@ local function buildFrame()
     ry = ry - ROW_H - 2
     local cbDungeon = makeCheckbox(f, "Auto-enable in Dungeons", "auto_combatlog_dungeon")
     cbDungeon:SetPoint("TOPLEFT", f, "TOPLEFT", COL2_X, ry)
-
-    ry = ry - ROW_H - 2
-    local cbRelay = makeCheckbox(f, "Auto-activate Relay", "auto_relay")
-    cbRelay:SetPoint("TOPLEFT", f, "TOPLEFT", COL2_X, ry)
 
     -- ---- Debug section ----
     ry = ry - ROW_H - 12

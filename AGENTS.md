@@ -160,9 +160,11 @@ Declared in the TOC; hydrated by `Core/Config.lua` on `ADDON_LOADED`.
 
 ```
 ChronicleCompanionWoTLKDB             -- account-wide
-  config = { debug=false, hijack_enabled=true, auto_combatlog_on_raid=true,
+  config = { debug=false, auto_combatlog_on_raid=true,
              log_dungeons=true, broadcast_enabled=true, is_logger=true,
              silent_auto_logging=false, show_minimap=true, ... }
+  -- Note: the relay is unconditionally tied to LoggingCombat() state.
+  -- There is no separate relay toggle; if combat logging is on, the relay is on.
   peers  = { [guid] = { last_ci_hash, last_seen_at } }       -- cross-character dedup hint
 
 ChronicleCompanionWoTLKCharDB         -- per-character

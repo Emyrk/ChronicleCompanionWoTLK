@@ -554,7 +554,7 @@ local function slashHandler(msg)
         return
     end
 
-    -- ---- /clog relay [status|activate|deactivate|write|clear|pause|resume|ui] ----
+    -- ---- /clog relay [status|activate|deactivate|write|clear|ui] ----
     if cmd == "relay" then
         local sub = tokens[2]
         local Relay = Chronicle.Relay
@@ -567,7 +567,7 @@ local function slashHandler(msg)
             end
             local m = Relay:GetMetrics()
             local state = Relay:IsActive() and "ACTIVE" or "inactive"
-            if Relay:IsPaused() then state = "PAUSED" end
+
             local landed, total = Relay:GetActiveProgress()
             local label = Relay:GetActiveLabel()
             Log:Info("Relay: %s", state)
@@ -578,7 +578,7 @@ local function slashHandler(msg)
             end
             Log:Info("  Landed: %d  |  Missed: %d  |  Sent: %d  |  Polls: %d",
                 m.chunks_landed, m.chunks_missed, m.messages_sent, m.provider_polls)
-            Log:Info("  /clog relay <activate|deactivate|write|clear|pause|resume|ui>")
+            Log:Info("  /clog relay <activate|deactivate|write|clear|ui>")
             return
         end
 
@@ -591,16 +591,6 @@ local function slashHandler(msg)
         if sub == "deactivate" then
             Relay:Deactivate()
             Log:Info("Relay force-deactivated")
-            return
-        end
-
-        if sub == "pause" then
-            Relay:Pause()
-            return
-        end
-
-        if sub == "resume" then
-            Relay:Resume()
             return
         end
 
@@ -631,7 +621,7 @@ local function slashHandler(msg)
             return
         end
 
-        Log:Info("Usage: /clog relay [status|activate|deactivate|write|clear|pause|resume|ui]")
+        Log:Info("Usage: /clog relay [status|activate|deactivate|write|clear|ui]")
         return
     end
 

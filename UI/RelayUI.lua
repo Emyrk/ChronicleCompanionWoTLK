@@ -108,7 +108,6 @@ local function refresh()
     -- Status line
     local state = "INACTIVE"
     if Relay:IsActive() then state = "|cff44ff44ACTIVE|r" end
-    if Relay:IsPaused() then state = "|cffffff00PAUSED|r" end
     local logging = LoggingCombat() and "|cff44ff44ON|r" or "|cffff4444OFF|r"
     local numGlobals = Chronicle.C and #Chronicle.C.HIJACK_GLOBALS or 0
     statusText:SetText(string.format("Status: %s    CombatLog: %s    Globals: %d    Last land: %s",
@@ -237,19 +236,21 @@ local function buildFrame()
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
 
-    -- Pause/Resume button
+    -- Combat log toggle button (relay follows automatically)
     local pauseBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     pauseBtn:SetWidth(80)
     pauseBtn:SetHeight(22)
     pauseBtn:SetPoint("RIGHT", closeBtn, "LEFT", -4, 0)
-    pauseBtn:SetText("Pause")
+    pauseBtn:SetText(LoggingCombat() and "Stop Log" or "Start Log")
     pauseBtn:SetScript("OnClick", function()
-        if Relay:IsPaused() then
-            Relay:Resume()
-            pauseBtn:SetText("Pause")
+        if LoggingCombat() then
+            LoggingCombat(false)
+            Relay:Reevaluate()
+            pauseBtn:SetText("Start Log")
         else
-            Relay:Pause()
-            pauseBtn:SetText("Resume")
+            LoggingCombat(true)
+            Relay:Reevaluate()
+            pauseBtn:SetText("Stop Log")
         end
     end)
 

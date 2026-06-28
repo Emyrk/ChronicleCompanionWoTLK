@@ -4,9 +4,10 @@
 -- Automatically enables combat logging and activates the relay when the
 -- player enters a raid or dungeon instance.  Deactivates when leaving.
 --
--- Two independent config toggles:
---   auto_combatlog  (default true) -- auto-enable LoggingCombat()
---   auto_relay      (default true) -- auto-activate the smuggling relay
+-- Config toggles:
+--   auto_combatlog_raid    (default true) -- auto-enable LoggingCombat() in raids
+--   auto_combatlog_dungeon (default true) -- auto-enable LoggingCombat() in dungeons
+-- The relay is unconditionally tied to LoggingCombat() -- no separate toggle.
 -- =============================================================================
 
 local Log    = Chronicle.Logger
@@ -68,19 +69,12 @@ local function evaluate()
             end
         end
 
-        -- Auto relay
-        if Config:Get("auto_relay") then
-            Relay:Activate()
-            Log:Debug("Auto-activated relay for %s", instanceName)
-        end
+        -- Relay follows combat logging state
+        Relay:Reevaluate()
 
     -- Leaving an instance
     elseif not inInstance and wasInInstance then
         wasInInstance = false
-
-        if Config:Get("auto_relay") then
-            Relay:Deactivate()
-        end
 
         -- Turn off combat logging if we auto-enabled it
         if LoggingCombat() then
@@ -89,6 +83,8 @@ local function evaluate()
         else
             Log:Info("Left instance")
         end
+        -- Relay follows combat logging state
+        Relay:Reevaluate()
     end
 end
 

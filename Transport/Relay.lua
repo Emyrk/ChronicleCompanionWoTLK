@@ -93,7 +93,7 @@ local stashedOffset  = 0    -- bytes already packed into the previous slot
 
 -- Relay on/off
 local active        = false
-local paused        = false   -- manual pause via /clog relay pause
+
 
 -- Metrics (in-memory, reset on reload)
 local metrics = {
@@ -175,8 +175,7 @@ end
 function R:GetMetrics() return metrics end
 --- @treturn bool true if relay is actively hijacking globals
 function R:IsActive() return active end
---- @treturn bool true if manually paused
-function R:IsPaused() return paused end
+
 --- @treturn string label of the provider whose message is currently being chunked
 function R:GetActiveLabel() return activeLabel end
 --- @treturn number landed chunks of active message
@@ -512,7 +511,7 @@ local function onMiss(failedType)
 end
 
 local function onSpellCastFailed(failedType)
-    if not active or paused then return end
+    if not active then return end
 
     -- If nothing is armed, try to get something
     if not armedChunk then
@@ -617,11 +616,7 @@ end
 -- ---------------------------------------------------------------------------
 
 local function shouldBeActive()
-    if paused then return false end
-    if not LoggingCombat() then return false end
-    local cfg = Chronicle.Config
-    if cfg and cfg:Get("hijack_enabled") == false then return false end
-    return true
+    return LoggingCombat() and true or false
 end
 
 function R:Activate()
@@ -650,23 +645,9 @@ end
 -- If the relay is active and idle (nothing armed), polls providers
 -- and arms the first available chunk immediately.
 function R:Kick()
-    if not active or paused then return end
+    if not active then return end
     if armedChunk then return end  -- already working on something
     armNext()
-end
-
-function R:Pause()
-    paused = true
-    restoreOriginals()
-    Log:Info("Relay paused")
-end
-
-function R:Resume()
-    paused = false
-    Log:Info("Relay resumed")
-    if shouldBeActive() then
-        R:Activate()
-    end
 end
 
 function R:Reevaluate()
