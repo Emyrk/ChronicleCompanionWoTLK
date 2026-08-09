@@ -6,8 +6,7 @@
 -- module attaches itself to sub-tables of Chronicle rather than creating
 -- new globals.
 --
--- Load order: this file MUST be the first Chronicle source in the TOC
--- (after DispatchProbe.lua, which is a throwaway that also sets the global).
+-- Load order: this file MUST be the first Chronicle source in the TOC.
 -- =============================================================================
 
 Chronicle = Chronicle or {}

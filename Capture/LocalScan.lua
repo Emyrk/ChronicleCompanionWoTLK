@@ -5,8 +5,7 @@
 -- together with guild / pet / honor / arena team readers and produces the
 -- CI struct that will eventually be serialised and smuggled.
 --
--- Also owns the slash-command handler for the addon -- both the existing
--- DispatchProbe commands (arm / disarm / log / probe) and the new nested
+-- Also owns the slash-command handler for the addon, including nested
 -- "inspect" sub-commands for testing individual capture functions.
 --
 -- Slash aliases: /chron, /chronicle, /clog  (all three route here)
@@ -258,17 +257,11 @@ end
 -- ---------------------------------------------------------------------------
 -- Slash command handler
 --
--- Replaces the DispatchProbe's handler. Supports the old arm/disarm/log/probe
--- commands plus new nested "inspect" sub-commands.
---
 -- Routing:
 --   /chron inspect <sub> [unit]   ->  capture testing commands
---   /clog loglvl <level>          ->  set log level
---   /chron arm <text>             ->  DispatchProbe arm (if probe loaded)
---   /chron disarm                 ->  DispatchProbe disarm
---   /chron log                    ->  toggle combat logging
---   /chron probe                  ->  DispatchProbe global dump
---   /chron help                   ->  print help
+--   /clog log <sub>               ->  logger settings
+--   /clog relay <sub>             ->  relay diagnostics and controls
+--   /chron help                    ->  print help
 -- ---------------------------------------------------------------------------
 
 --- Parse a slash message into tokens.
@@ -541,38 +534,6 @@ local function slashHandler(msg)
 
         -- Unknown log sub-command
         Log:Info("Usage: /clog log [set-lvl <level> | set-window <window>]")
-        return
-    end
-
-    -- ---- DispatchProbe pass-through (arm / disarm / probe) ----
-    -- These reference the DispatchProbe's functions via the Chronicle table
-    -- or directly through the globals it set up.
-    if cmd == "arm" then
-        -- Reconstruct the rest of the message (everything after "arm ")
-        local rest = (msg or ""):match("^%S+%s+(.+)$") or ""
-        if Chronicle._probeArm then
-            Chronicle._probeArm(rest)
-        else
-            Log:Warn("Dispatch probe not loaded -- arm unavailable")
-        end
-        return
-    end
-
-    if cmd == "disarm" then
-        if Chronicle._probeDisarm then
-            Chronicle._probeDisarm()
-        else
-            Log:Warn("Dispatch probe not loaded -- disarm unavailable")
-        end
-        return
-    end
-
-    if cmd == "probe" then
-        if Chronicle._probeDump then
-            Chronicle._probeDump()
-        else
-            Log:Warn("Dispatch probe not loaded -- probe unavailable")
-        end
         return
     end
 

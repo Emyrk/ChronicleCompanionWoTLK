@@ -18,7 +18,7 @@ Chronicle.C = {
     MSG_COUNTER_MAX = 9,       -- wraps: 0,1,2,...,9,0,1,...
 
     -- -----------------------------------------------------------------
-    -- Field limits  (Warmane 3.3.5a -- confirmed by DispatchProbe)
+    -- Field limits  (Warmane 3.3.5a -- confirmed by live channel testing)
     -- -----------------------------------------------------------------
     FIELD_MAX_CHARS = 245,     -- engine truncates failedType beyond this
 
