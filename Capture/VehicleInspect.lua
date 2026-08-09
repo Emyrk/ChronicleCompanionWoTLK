@@ -163,7 +163,9 @@ local function buildSnapshot(reason)
 
     for i = 1, C.PARTY_MEMBER_MAX do
         local baseUnit = "party" .. i
-        if api("UnitHasVehicleUI", baseUnit) then
+        if api("UnitUsingVehicle", baseUnit)
+            and api("UnitHasVehicleUI", baseUnit)
+        then
             addPair(snapshot, baseUnit, "partypet" .. i, "party")
         end
     end
@@ -171,7 +173,9 @@ local function buildSnapshot(reason)
     for i = 1, C.RAID_MEMBER_MAX do
         local baseUnit = "raid" .. i
         local targetsVehicle = api("UnitTargetsVehicleInRaidUI", baseUnit)
-        if targetsVehicle or api("UnitHasVehicleUI", baseUnit) then
+        if api("UnitUsingVehicle", baseUnit)
+            and (targetsVehicle or api("UnitHasVehicleUI", baseUnit))
+        then
             addPair(snapshot, baseUnit, "raidpet" .. i, "raid")
         end
     end

@@ -95,7 +95,12 @@ local function scanVisible()
 
     for i = 1, C.PARTY_MEMBER_MAX do
         local controllerUnit = "party" .. i
-        if api("UnitHasVehicleUI", controllerUnit) then
+        -- partypetN is also the normal hunter/warlock pet token. The vehicle UI
+        -- flag alone is not reliable enough on this client; UnitUsingVehicle
+        -- distinguishes an actively controlled vehicle from an ordinary pet.
+        if api("UnitUsingVehicle", controllerUnit)
+            and api("UnitHasVehicleUI", controllerUnit)
+        then
             observePair(observed, controllerUnit, "partypet" .. i, "party")
         end
     end
@@ -103,7 +108,9 @@ local function scanVisible()
     for i = 1, C.RAID_MEMBER_MAX do
         local controllerUnit = "raid" .. i
         local targetsVehicle = api("UnitTargetsVehicleInRaidUI", controllerUnit)
-        if targetsVehicle or api("UnitHasVehicleUI", controllerUnit) then
+        if api("UnitUsingVehicle", controllerUnit)
+            and (targetsVehicle or api("UnitHasVehicleUI", controllerUnit))
+        then
             observePair(observed, controllerUnit, "raidpet" .. i, "raid")
         end
     end
