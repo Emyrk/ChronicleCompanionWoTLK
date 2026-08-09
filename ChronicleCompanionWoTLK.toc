@@ -17,6 +17,8 @@ Capture\GearScan.lua
 Capture\TalentScan.lua
 Capture\GlyphScan.lua
 Capture\CIFormat.lua
+Capture\VehicleTracker.lua
+Capture\VehicleInspect.lua
 Capture\LocalScan.lua
 
 Transport\Relay.lua
@@ -25,6 +27,7 @@ Core\AutoLog.lua
 
 Providers\ZoneProvider.lua
 Providers\HeaderProvider.lua
+Providers\VehicleProvider.lua
 Providers\PlayerListProvider.lua
 Providers\LootProvider.lua
 

@@ -1,9 +1,9 @@
 -- =============================================================================
 -- Providers/LootProvider.lua
 --
--- Captures loot events and emits them through the relay.  Lowest priority
--- provider -- only fills gaps when Zone, Header, and PlayerList have
--- nothing to send.
+-- Captures loot events and emits them through the relay. It fills gaps when
+-- higher-priority context, vehicle, header, and player providers have nothing
+-- to send.
 --
 -- Only tracks Uncommon (green) quality and above.  Internally queued by
 -- quality: Legendary > Epic > Rare > Uncommon.
@@ -24,7 +24,7 @@ local Relay = Chronicle.Relay
 local Util  = Chronicle.Util
 
 local P = {
-    priority = 5,   -- after Reset (1), Zone (2), Header (3), PlayerList (4)
+    priority = 5,   -- after Reset, Zone/Vehicle, Header, and PlayerList
 }
 
 -- ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ Chronicle.C = {
     MSG_COUNTER_MAX = 9,       -- wraps: 0,1,2,...,9,0,1,...
 
     -- -----------------------------------------------------------------
-    -- Field limits  (Warmane 3.3.5a -- confirmed by DispatchProbe)
+    -- Field limits  (Warmane 3.3.5a -- confirmed by live channel testing)
     -- -----------------------------------------------------------------
     FIELD_MAX_CHARS = 245,     -- engine truncates failedType beyond this
 
@@ -35,12 +35,32 @@ Chronicle.C = {
     -- -----------------------------------------------------------------
     -- Scan / retry timing
     -- -----------------------------------------------------------------
+    RELAY_ACTIVATION_DELAY_SEC = 5,   -- let the combat-log file writer settle
+    HEADER_INITIAL_REEMIT_SEC  = 60,  -- quick recovery copy after first header
+    HEADER_REEMIT_SEC          = 300, -- steady-state header refresh
     IDENTITY_RETRY_SEC = 3,    -- fast re-poll when UnitName/UnitClass return nil
 
     -- -----------------------------------------------------------------
     -- CLEU constants
     -- -----------------------------------------------------------------
     RELAY_FAILEDTYPE_ARG = 12, -- select(12, ...) in SPELL_CAST_FAILED
+
+    -- -----------------------------------------------------------------
+    -- Vehicle attribution
+    -- -----------------------------------------------------------------
+    VEHICLE_PROVIDER_PRIORITY = 3,
+    VEHICLE_CHANGE_QUEUE_MAX  = 100,
+
+    -- -----------------------------------------------------------------
+    -- Vehicle inspect diagnostics
+    -- -----------------------------------------------------------------
+    PARTY_MEMBER_MAX            = 4,
+    RAID_MEMBER_MAX             = 40,
+    VEHICLE_SEAT_BUTTON_MAX     = 10,
+    VEHICLE_INSPECT_RECORD_MAX  = 100,
+    VEHICLE_INSPECT_MAPPING_MAX = 100,
+    INSPECT_OUTPUT_LINE_MAX      = 500,
+    VEHICLE_INSPECT_DUMP_MAX    = 40,
 
     -- -----------------------------------------------------------------
     -- SPELL_FAILED_* globals to hijack

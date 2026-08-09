@@ -1,7 +1,7 @@
 # ChronicleCompanionWoTLK — Agent Guide
 
 > Companion addon for **[ChronicleClassic.com](https://chronicleclassic.com)**, ported to **WoW 3.3.5a (WotLK, Interface 30300)**.
-> Status: greenfield. `DispatchProbe.lua` is a throwaway proof-of-concept that validated the smuggling channel (see §3.5); everything below is the design contract for the real build.
+> Status: active implementation. The initial throwaway transport probe validated the smuggling channel and has been removed; see section 3.5 for the retained findings.
 
 ---
 
@@ -78,7 +78,7 @@ Anything Chronicle's vanilla version emits as a custom event that **already exis
 
 ## 3.5. Channel proof — what we confirmed on Warmane 3.3.5a (2026-05-20)
 
-Before building any of the layered structure below, we proved the smuggling channel works with a minimum-viable probe (`DispatchProbe.lua`, ~150 lines, no abstractions). Findings to bake into the real Transport module:
+Before building the production relay, we proved the smuggling channel with a minimum-viable throwaway probe. The probe has since been removed. Findings retained in the real Transport module:
 
 - **The engine reads the Lua `SPELL_FAILED_*` global at CLEU emission time**, not a cached C string. Overwriting the global in Lua immediately changes what lands in `WoWCombatLog.txt` for the next `SPELL_CAST_FAILED` row. Confirmed payload `"hello"` arriving verbatim in the fail-reason field for a `SPELL_FAILED_MOVING` failure.
 - **`CastSpellByName` is protected on 3.3.5a** and cannot be invoked from a slash command or any non-hardware code path — calling it from Lua is a silent no-op (no error, no cast, no CLEU). This kills any "synthesize our own failure to flush a chunk" design. The relay **must** piggyback on failures the player produces naturally during real play.
@@ -90,7 +90,7 @@ Before building any of the layered structure below, we proved the smuggling chan
 - **The hijack is sticky across multiple failures with different payloads.** You can `arm A` → fail → `arm B` → fail and see both payloads land in sequence. This confirms the relay's chunk-advance logic (re-arm with the next chunk after landing confirmation) is entirely sound — no engine-side caching interferes.
 - **Slash routing:** `/chron`, `/chronicle`, and `/clog` are the three confirmed-working slash slots.
 
-The working probe lives at the repo root as `DispatchProbe.lua` until it is rewritten into `Transport/SpellFailedRelay.lua`. Treat the probe as throwaway; do **not** evolve it into the production module — re-derive the relay against the real Core/* substrate.
+The throwaway probe was removed after the channel was re-derived in the production relay. Do not reintroduce a second transport implementation or a second `SPELL_FAILED_*` globals list; `Core/Constants.lua` is the single source of truth and `Transport/Relay.lua` is the only runtime hijack owner.
 
 ---
 
@@ -194,7 +194,6 @@ Primary slashes: `/chronicle`, `/chron`, `/clog`. All three resolve to the same 
 | `/chron log [on\|off]`   | Toggle `LoggingCombat()`; with no arg, toggles the current state.                   |
 | `/chron status`          | Print metrics: queue depth, chunks landed/lost, eager restores, last flush age.     |
 | `/chron debug [on\|off]` | Toggle `config.debug`. Verbose logger output to chat.                               |
-| `/chron probe`           | Dev: dump current `SPELL_FAILED_*` global values + show pending chunk if any.       |
 | `/chron forceci`         | Dev: bypass dedup hash and re-enqueue our own CI right now.                         |
 | `/chron inspect <name>`  | Force a one-shot `NotifyInspect()` on a raid/party member.                          |
 | `/chron clearcache`      | Wipe inspect cache.                                                                 |
@@ -210,7 +209,7 @@ Debugging a combat-log-smuggling addon is hard because half the bugs are silent:
 
 - **`Core/Logger.lua`** — `Logger.debug()` is a no-op unless `config.debug` is true. `info / warn / error` always print. Every print is prefixed `|cff4ec3ff[Chronicle]|r` (info), yellow (warn), red (error). Errors are also fed through `geterrorhandler()` so BugSack picks them up.
 - **`Core/Metrics.lua`** — single in-memory counters table (`chunks_queued`, `chunks_landed`, `chunks_lost_ttl`, `chunks_re_applied`, `eager_restores`, `hijack_activations`, `relay_payload_bytes`, `taint_errors_suppressed`). Persisted on `PLAYER_LOGOUT`. Printed by `/chron status`.
-- **`/chron probe`** — reads every `SPELL_FAILED_*` global, prints whether each currently holds a sentinel chunk or its original value, plus `H.pendingChunk` so we can see exactly what the engine is about to read.
+- **Relay monitor (`/clog relay ui`)** -- shows provider state, the active message, armed chunk preview, landing/miss telemetry, and throughput buckets.
 - **Sentinel landing telemetry** — every confirmed landing logs at debug level: `chunk landed: snapshot=<id> seq=<n>/<m> failedType=<truncated>`.
 - **Live in-game frame (`/chron dev`)** — small scrollable text frame that streams `Logger.debug` output, gated behind `config.debug`. Optional but invaluable in raid.
 - **Round-trip test** — `Test/RoundTrip.lua` (loaded only when `config.debug` is true): build a CI, serialize, base64, chunk, then immediately parse it back through `Sentinel.parse` + `Serialize.deserialize` and assert deep equality. Smoke test for the whole pipeline without needing a fight.

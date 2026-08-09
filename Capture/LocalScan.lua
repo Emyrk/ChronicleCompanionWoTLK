@@ -5,8 +5,7 @@
 -- together with guild / pet / honor / arena team readers and produces the
 -- CI struct that will eventually be serialised and smuggled.
 --
--- Also owns the slash-command handler for the addon -- both the existing
--- DispatchProbe commands (arm / disarm / log / probe) and the new nested
+-- Also owns the slash-command handler for the addon, including nested
 -- "inspect" sub-commands for testing individual capture functions.
 --
 -- Slash aliases: /chron, /chronicle, /clog  (all three route here)
@@ -258,17 +257,11 @@ end
 -- ---------------------------------------------------------------------------
 -- Slash command handler
 --
--- Replaces the DispatchProbe's handler. Supports the old arm/disarm/log/probe
--- commands plus new nested "inspect" sub-commands.
---
 -- Routing:
 --   /chron inspect <sub> [unit]   ->  capture testing commands
---   /clog loglvl <level>          ->  set log level
---   /chron arm <text>             ->  DispatchProbe arm (if probe loaded)
---   /chron disarm                 ->  DispatchProbe disarm
---   /chron log                    ->  toggle combat logging
---   /chron probe                  ->  DispatchProbe global dump
---   /chron help                   ->  print help
+--   /clog log <sub>               ->  logger settings
+--   /clog relay <sub>             ->  relay diagnostics and controls
+--   /chron help                    ->  print help
 -- ---------------------------------------------------------------------------
 
 --- Parse a slash message into tokens.
@@ -325,7 +318,8 @@ local function handleInspect(tokens)
     local unitInput = tokens[3]
 
     if not sub then
-        Log:Info("Usage: /chron inspect <ui|gear|talents|glyphs|guild|pet|honor|arena|ci|probe> [unit]")
+        Log:Info("Usage: /chron inspect <ui|gear|talents|glyphs|guild|pet|vehicle|honor|arena|ci|probe> [unit]")
+        Log:Info("  /chron inspect vehicle <snapshot|watch|stop|dump|clear>")
         return
     end
 
@@ -372,6 +366,27 @@ local function handleInspect(tokens)
             Log:Info("Pet for %s: none", unit)
         end
 
+    elseif sub == "vehicle" then
+        local VehicleInspect = Chronicle.VehicleInspect
+        local action = tokens[3] or "snapshot"
+        if not VehicleInspect then
+            Log:Warn("Vehicle inspect module not loaded")
+            return
+        end
+        if action == "snapshot" then
+            VehicleInspect:Snapshot("slash")
+        elseif action == "watch" then
+            VehicleInspect:StartWatch()
+        elseif action == "stop" then
+            VehicleInspect:StopWatch()
+        elseif action == "dump" then
+            VehicleInspect:Dump()
+        elseif action == "clear" then
+            VehicleInspect:Clear()
+        else
+            Log:Info("Usage: /chron inspect vehicle <snapshot|watch|stop|dump|clear>")
+        end
+
     elseif sub == "honor" then
         local honor = Capture.ScanHonor()
         Log:Info("Honor (local player):")
@@ -412,7 +427,7 @@ local function handleInspect(tokens)
 
     else
         Log:Info("Unknown inspect sub-command: '%s'", sub)
-        Log:Info("Usage: /chron inspect <ui|gear|talents|glyphs|guild|pet|honor|arena|ci|probe> [unit]")
+        Log:Info("Usage: /chron inspect <ui|gear|talents|glyphs|guild|pet|vehicle|honor|arena|ci|probe> [unit]")
     end
 end
 
@@ -522,38 +537,6 @@ local function slashHandler(msg)
         return
     end
 
-    -- ---- DispatchProbe pass-through (arm / disarm / probe) ----
-    -- These reference the DispatchProbe's functions via the Chronicle table
-    -- or directly through the globals it set up.
-    if cmd == "arm" then
-        -- Reconstruct the rest of the message (everything after "arm ")
-        local rest = (msg or ""):match("^%S+%s+(.+)$") or ""
-        if Chronicle._probeArm then
-            Chronicle._probeArm(rest)
-        else
-            Log:Warn("Dispatch probe not loaded -- arm unavailable")
-        end
-        return
-    end
-
-    if cmd == "disarm" then
-        if Chronicle._probeDisarm then
-            Chronicle._probeDisarm()
-        else
-            Log:Warn("Dispatch probe not loaded -- disarm unavailable")
-        end
-        return
-    end
-
-    if cmd == "probe" then
-        if Chronicle._probeDump then
-            Chronicle._probeDump()
-        else
-            Log:Warn("Dispatch probe not loaded -- probe unavailable")
-        end
-        return
-    end
-
     -- ---- /clog relay [status|activate|deactivate|write|clear|ui] ----
     if cmd == "relay" then
         local sub = tokens[2]
@@ -566,7 +549,8 @@ local function slashHandler(msg)
                 return
             end
             local m = Relay:GetMetrics()
-            local state = Relay:IsActive() and "ACTIVE" or "inactive"
+            local state = Relay:IsActive() and "ACTIVE"
+                or (Relay:IsActivationPending() and "WAITING" or "inactive")
 
             local landed, total = Relay:GetActiveProgress()
             local label = Relay:GetActiveLabel()
@@ -584,7 +568,14 @@ local function slashHandler(msg)
 
         if sub == "activate" then
             Relay:Activate()
-            Log:Info("Relay force-activated")
+            if Relay:IsActivationPending() then
+                Log:Info("Relay activation requested -- waiting %ds for combat-log writer",
+                    Chronicle.C.RELAY_ACTIVATION_DELAY_SEC)
+            elseif Relay:IsActive() then
+                Log:Info("Relay already active")
+            else
+                Log:Warn("Relay requires combat logging to be enabled")
+            end
             return
         end
 

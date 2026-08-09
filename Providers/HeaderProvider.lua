@@ -5,8 +5,9 @@
 -- realm, locale, client build, and a session ID so the server can group
 -- log segments from the same play session.
 --
--- Priority 2 (after Zone, before PlayerList).
--- Dirty at session start and every 30 minutes.
+-- Priority 3 (after Reset and Zone, before Vehicle and PlayerList).
+-- Dirty on relay activation. After the first emit, retries at 1 minute, then
+-- settles into a 5-minute refresh cadence.
 --
 -- Payload format:
 --   H:<addonVersion>,<realm>,<locale>,<wowVersion>,<wowBuild>,<sessionId>,<localEpoch>,<utcOffsetMin>
@@ -38,10 +39,11 @@ local P = {
 -- State
 -- ---------------------------------------------------------------------------
 
-local dirty       = true       -- dirty on load (first session)
-local lastEmitAt  = 0
-local REEMIT_SEC  = 1800       -- re-emit every 30 minutes
-local sessionId   = nil        -- generated on PLAYER_LOGIN
+local dirty          = true       -- dirty on load (first session)
+local lastEmitAt     = 0
+local emitCount      = 0
+local timerGeneration = 0
+local sessionId      = nil        -- generated on PLAYER_LOGIN
 
 local Util = Chronicle.Util
 
@@ -49,23 +51,32 @@ local Util = Chronicle.Util
 -- UTC offset helper
 -- ---------------------------------------------------------------------------
 --
--- Lua 5.1 has no direct "local TZ offset" API.  Standard trick: take the
--- current epoch, format it as a UTC broken-down table with date("!*t"), then
--- feed that table back through time() -- which interprets it as *local* time.
--- The delta is (local - UTC) in seconds.  difftime() handles platforms where
--- time_t isn't a plain number; fall back to subtraction if it's missing.
-local function computeUtcOffsetMinutes()
-    local now = time()
-    local utc = date("!*t", now)
-    utc.isdst = false
-    local utcAsLocal = time(utc)
-    local diff
-    if type(difftime) == "function" then
-        diff = difftime(now, utcAsLocal)
-    else
-        diff = now - utcAsLocal
+-- WoW's global time() is the game API, not the full Lua os.time function. On
+-- 3.3.5a it does not accept a broken-down date table, so the common
+-- time(date("!*t")) timezone trick makes HeaderProvider:Poll() fail and leaves
+-- the session header permanently dirty. Compare local and UTC calendar fields
+-- directly instead. At one instant those dates can differ by at most one day.
+local function computeUtcOffsetMinutes(now)
+    local okLocal, localParts = pcall(date, "*t", now)
+    local okUtc, utcParts = pcall(date, "!*t", now)
+    if not okLocal or not okUtc
+        or type(localParts) ~= "table" or type(utcParts) ~= "table"
+    then
+        return 0
     end
-    return math.floor(diff / 60 + 0.5)
+
+    local dayDelta
+    if localParts.year == utcParts.year then
+        dayDelta = (localParts.yday or 0) - (utcParts.yday or 0)
+    elseif localParts.year > utcParts.year then
+        dayDelta = 1
+    else
+        dayDelta = -1
+    end
+
+    local hourDelta = (localParts.hour or 0) - (utcParts.hour or 0)
+    local minuteDelta = (localParts.min or 0) - (utcParts.min or 0)
+    return dayDelta * 1440 + hourDelta * 60 + minuteDelta
 end
 
 -- ---------------------------------------------------------------------------
@@ -88,7 +99,7 @@ local function buildPayload()
     local sid = sessionId or "0000"
 
     local localEpoch   = time()
-    local utcOffsetMin = computeUtcOffsetMinutes()
+    local utcOffsetMin = computeUtcOffsetMinutes(localEpoch)
 
     -- Format: H:<addonVersion>,<realm>,<locale>,<wowVersion>,<wowBuild>,<sessionId>,<localEpoch>,<utcOffsetMin>
     return string.format("H:%s,%s,%s,%s,%s,%s,%d,%d",
@@ -105,10 +116,28 @@ function P:Label()
     return "Header"
 end
 
+local function currentReemitSec()
+    if emitCount <= 1 then
+        return Chronicle.C.HEADER_INITIAL_REEMIT_SEC
+    end
+    return Chronicle.C.HEADER_REEMIT_SEC
+end
+
+local function scheduleReemit()
+    timerGeneration = timerGeneration + 1
+    local generation = timerGeneration
+    local delay = currentReemitSec()
+    Chronicle.RunAfter(delay, function()
+        if generation == timerGeneration then
+            P:MarkDirty()
+        end
+    end)
+end
+
 --- @treturn number 0 if clean, 1 if dirty or past re-emit timer
 function P:Dirty()
     if dirty then return 1 end
-    if (time() - lastEmitAt) >= REEMIT_SEC then return 1 end
+    if (time() - lastEmitAt) >= currentReemitSec() then return 1 end
     return 0
 end
 
@@ -116,8 +145,9 @@ end
 function P:Poll()
     local now = time()
 
-    -- Periodic re-emit
-    if not dirty and (now - lastEmitAt) >= REEMIT_SEC then
+    -- Periodic re-emit. The quick second copy recovers from a startup carrier
+    -- that CLEU observed but the file writer did not persist.
+    if not dirty and (now - lastEmitAt) >= currentReemitSec() then
         dirty = true
     end
 
@@ -127,6 +157,9 @@ function P:Poll()
 
     dirty = false
     lastEmitAt = now
+    emitCount = emitCount + 1
+
+    scheduleReemit()
 
     local summary = "HDR " .. (sessionId or "?")
 
@@ -141,13 +174,15 @@ function P:MarkDirty()
 end
 
 --- Return current state for UI/debug.
--- @treturn table { dirty, lastEmitAt, reemitSec, sessionId }
+-- @treturn table { dirty, lastEmitAt, reemitSec, emitCount, sessionId }
 function P:GetState()
     return {
         dirty       = dirty,
         lastPayload = nil,
         lastEmitAt  = lastEmitAt,
-        reemitSec   = REEMIT_SEC,
+        reemitSec   = currentReemitSec(),
+        emitCount   = emitCount,
+        timerGeneration = timerGeneration,
         sessionId   = sessionId,
     }
 end

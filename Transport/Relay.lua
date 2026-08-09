@@ -91,8 +91,12 @@ local stashedPayload = nil
 local stashedLabel   = nil
 local stashedOffset  = 0    -- bytes already packed into the previous slot
 
--- Relay on/off
-local active        = false
+-- Relay on/off. Activation is delayed after LoggingCombat() turns on because
+-- CLEU can observe the first failure before the combat-log file writer persists
+-- it, which produces an orphan continuation at the start of the file.
+local active = false
+local activationPending = false
+local activationGeneration = 0
 
 
 -- Metrics (in-memory, reset on reload)
@@ -173,6 +177,8 @@ end
 
 --- @treturn table metrics counters
 function R:GetMetrics() return metrics end
+--- @treturn bool true while relay is waiting for the combat-log writer
+function R:IsActivationPending() return activationPending end
 --- @treturn bool true if relay is actively hijacking globals
 function R:IsActive() return active end
 
@@ -619,20 +625,47 @@ local function shouldBeActive()
     return LoggingCombat() and true or false
 end
 
-function R:Activate()
-    if active then return end
+local function activateNow()
+    if active or not shouldBeActive() then return end
+
+    activationPending = false
     captureOriginals()
     installUIErrorHook()
     installTaintSuppression()
+
+    -- A header can be lost at a combat-log startup boundary even when CLEU
+    -- confirms the carrier. Make every real activation start with fresh session
+    -- context before lower-priority provider data.
+    if Chronicle.HeaderProvider then
+        Chronicle.HeaderProvider:MarkDirty()
+    end
+
     active = true
-    Log:Debug("Relay: activated")
+    Log:Debug("Relay: activated after %ds startup delay", C.RELAY_ACTIVATION_DELAY_SEC)
     fireEvent("ACTIVATED", "")
-    -- Try to arm something immediately
     armNext()
 end
 
+function R:Activate()
+    if active or activationPending or not shouldBeActive() then return end
+
+    activationGeneration = activationGeneration + 1
+    local generation = activationGeneration
+    activationPending = true
+    Log:Debug("Relay: waiting %ds for combat-log writer", C.RELAY_ACTIVATION_DELAY_SEC)
+
+    Chronicle.RunAfter(C.RELAY_ACTIVATION_DELAY_SEC, function()
+        if generation ~= activationGeneration then return end
+        activationPending = false
+        activateNow()
+    end)
+end
+
 function R:Deactivate()
+    activationGeneration = activationGeneration + 1
+    activationPending = false
     if not active then return end
+
     restoreOriginals()
     active = false
     activePayload = nil
@@ -651,9 +684,11 @@ function R:Kick()
 end
 
 function R:Reevaluate()
-    if shouldBeActive() and not active then
-        R:Activate()
-    elseif not shouldBeActive() and active then
+    if shouldBeActive() then
+        if not active and not activationPending then
+            R:Activate()
+        end
+    elseif active or activationPending then
         R:Deactivate()
     end
 end
@@ -694,6 +729,17 @@ end
 -- ---------------------------------------------------------------------------
 
 local function onCLEU(event, ...)
+    -- Built-in /combatlog toggles do not call Relay:Reevaluate(). Use CLEU as
+    -- the fallback state detector, but never count a carrier while file logging
+    -- is disabled.
+    if not LoggingCombat() then
+        if active or activationPending then R:Deactivate() end
+        return
+    elseif not active then
+        R:Reevaluate()
+        return
+    end
+
     local subevent = select(2, ...)
     if subevent ~= "SPELL_CAST_FAILED" then return end
     -- All players' failures carry our hijacked globals on this client.
