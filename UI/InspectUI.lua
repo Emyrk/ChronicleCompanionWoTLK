@@ -20,6 +20,7 @@
 --   -----------------------------------------------------
 -- =============================================================================
 
+local C = Chronicle.C
 local Log = Chronicle.Logger
 local Capture = Chronicle.Capture
 
@@ -52,8 +53,22 @@ local C_ERROR    = { 1.0,  0.3,  0.3 }     -- red errors
 -- ---------------------------------------------------------------------------
 
 local outputFrame  -- forward ref, created in buildFrame()
+local outputLines = {}
+
+local function appendOutputLine(text)
+    outputLines[#outputLines + 1] = tostring(text or "")
+    if #outputLines > C.INSPECT_OUTPUT_LINE_MAX then
+        table.remove(outputLines, 1)
+    end
+end
+
+local function clearOutput()
+    outputLines = {}
+    if outputFrame then outputFrame:Clear() end
+end
 
 local function out(text, r, g, b)
+    appendOutputLine(text)
     if not outputFrame then return end
     outputFrame:AddMessage(text or "", r or C_TEXT[1], g or C_TEXT[2], b or C_TEXT[3])
 end
@@ -451,6 +466,95 @@ local BUTTONS_ROW3 = {
 
 local mainFrame = nil  -- singleton
 
+local copyFrame = nil
+local copyEditBox = nil
+
+local function buildCopyFrame()
+    if copyFrame then return copyFrame end
+
+    local f = CreateFrame("Frame", "ChronicleInspectCopyFrame", UIParent)
+    f:SetWidth(700)
+    f:SetHeight(500)
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, 20)
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:SetClampedToScreen(true)
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true,
+        tileSize = 32,
+        edgeSize = 24,
+        insets = { left = 5, right = 5, top = 5, bottom = 5 },
+    })
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
+    title:SetText("Copy Chronicle Inspect Output")
+    title:SetTextColor(C_TITLE[1], C_TITLE[2], C_TITLE[3])
+
+    local instructions = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    instructions:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -38)
+    instructions:SetText("Text is selected. Press Ctrl+C to copy it, then Escape to close.")
+
+    local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+
+    local scrollFrame = CreateFrame("ScrollFrame", "ChronicleInspectCopyScrollFrame", f,
+        "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -60)
+    scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -34, 16)
+
+    local editBox = CreateFrame("EditBox", "ChronicleInspectCopyEditBox", scrollFrame)
+    editBox:SetMultiLine(true)
+    editBox:SetAutoFocus(false)
+    editBox:SetFontObject(ChatFontNormal)
+    editBox:SetWidth(640)
+    editBox:SetHeight(400)
+    editBox:SetTextInsets(4, 4, 4, 4)
+    editBox:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+        f:Hide()
+    end)
+    editBox:SetScript("OnTextChanged", function(self)
+        local minimumHeight = scrollFrame:GetHeight() or 400
+        local textHeight = 0
+        if type(self.GetStringHeight) == "function" then
+            local ok, measured = pcall(self.GetStringHeight, self)
+            if ok then textHeight = measured or 0 end
+        end
+        if textHeight <= 0 then
+            local lineCount = 1
+            local text = self:GetText() or ""
+            for _ in text:gmatch("\n") do lineCount = lineCount + 1 end
+            textHeight = lineCount * 14
+        end
+        self:SetHeight(math.max(minimumHeight, textHeight + 16))
+        if type(scrollFrame.UpdateScrollChildRect) == "function" then
+            scrollFrame:UpdateScrollChildRect()
+        end
+    end)
+    scrollFrame:SetScrollChild(editBox)
+
+    copyEditBox = editBox
+    copyFrame = f
+    table.insert(UISpecialFrames, "ChronicleInspectCopyFrame")
+    f:Hide()
+    return f
+end
+
+local function showCopyOutput()
+    local f = buildCopyFrame()
+    copyEditBox:SetText(table.concat(outputLines, "\n"))
+    f:Show()
+    copyEditBox:SetFocus()
+    copyEditBox:HighlightText()
+end
+
 local function createButton(parent, label, onClick, width)
     local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     btn:SetWidth(width or BUTTON_W)
@@ -503,11 +607,12 @@ local function buildFrame()
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
 
-    -- ---- Clear button ----
-    local clearBtn = createButton(f, "Clear", function()
-        if outputFrame then outputFrame:Clear() end
-    end, 50)
+    -- ---- Output actions ----
+    local clearBtn = createButton(f, "Clear", clearOutput, 50)
     clearBtn:SetPoint("RIGHT", closeBtn, "LEFT", -2, 0)
+
+    local copyBtn = createButton(f, "Copy", showCopyOutput, 50)
+    copyBtn:SetPoint("RIGHT", clearBtn, "LEFT", -2, 0)
 
     -- ---- Unit editbox ----
     local unitLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")

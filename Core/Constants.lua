@@ -50,6 +50,7 @@ Chronicle.C = {
     VEHICLE_SEAT_BUTTON_MAX     = 10,
     VEHICLE_INSPECT_RECORD_MAX  = 100,
     VEHICLE_INSPECT_MAPPING_MAX = 100,
+    INSPECT_OUTPUT_LINE_MAX      = 500,
     VEHICLE_INSPECT_DUMP_MAX    = 40,
 
     -- -----------------------------------------------------------------
