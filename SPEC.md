@@ -111,7 +111,7 @@ H:0.1,Icecrown,enUS,3.3.5a,12340,a8f3
 
 ### V -- Vehicle Control Change
 
-Emitted by: `VehicleProvider` (priority 2)
+Emitted by: `VehicleProvider` (priority 3, after Header by registration order)
 Event-driven only. Repeated observations of the same assignment are deduplicated.
 
 ```

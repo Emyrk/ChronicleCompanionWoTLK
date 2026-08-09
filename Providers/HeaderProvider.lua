@@ -5,7 +5,7 @@
 -- realm, locale, client build, and a session ID so the server can group
 -- log segments from the same play session.
 --
--- Priority 3 (after Reset and Zone/Vehicle, before PlayerList).
+-- Priority 3 (after Reset and Zone, before Vehicle and PlayerList).
 -- Dirty at session start and every 30 minutes.
 --
 -- Payload format:
@@ -49,23 +49,32 @@ local Util = Chronicle.Util
 -- UTC offset helper
 -- ---------------------------------------------------------------------------
 --
--- Lua 5.1 has no direct "local TZ offset" API.  Standard trick: take the
--- current epoch, format it as a UTC broken-down table with date("!*t"), then
--- feed that table back through time() -- which interprets it as *local* time.
--- The delta is (local - UTC) in seconds.  difftime() handles platforms where
--- time_t isn't a plain number; fall back to subtraction if it's missing.
-local function computeUtcOffsetMinutes()
-    local now = time()
-    local utc = date("!*t", now)
-    utc.isdst = false
-    local utcAsLocal = time(utc)
-    local diff
-    if type(difftime) == "function" then
-        diff = difftime(now, utcAsLocal)
-    else
-        diff = now - utcAsLocal
+-- WoW's global time() is the game API, not the full Lua os.time function. On
+-- 3.3.5a it does not accept a broken-down date table, so the common
+-- time(date("!*t")) timezone trick makes HeaderProvider:Poll() fail and leaves
+-- the session header permanently dirty. Compare local and UTC calendar fields
+-- directly instead. At one instant those dates can differ by at most one day.
+local function computeUtcOffsetMinutes(now)
+    local okLocal, localParts = pcall(date, "*t", now)
+    local okUtc, utcParts = pcall(date, "!*t", now)
+    if not okLocal or not okUtc
+        or type(localParts) ~= "table" or type(utcParts) ~= "table"
+    then
+        return 0
     end
-    return math.floor(diff / 60 + 0.5)
+
+    local dayDelta
+    if localParts.year == utcParts.year then
+        dayDelta = (localParts.yday or 0) - (utcParts.yday or 0)
+    elseif localParts.year > utcParts.year then
+        dayDelta = 1
+    else
+        dayDelta = -1
+    end
+
+    local hourDelta = (localParts.hour or 0) - (utcParts.hour or 0)
+    local minuteDelta = (localParts.min or 0) - (utcParts.min or 0)
+    return dayDelta * 1440 + hourDelta * 60 + minuteDelta
 end
 
 -- ---------------------------------------------------------------------------
@@ -88,7 +97,7 @@ local function buildPayload()
     local sid = sessionId or "0000"
 
     local localEpoch   = time()
-    local utcOffsetMin = computeUtcOffsetMinutes()
+    local utcOffsetMin = computeUtcOffsetMinutes(localEpoch)
 
     -- Format: H:<addonVersion>,<realm>,<locale>,<wowVersion>,<wowBuild>,<sessionId>,<localEpoch>,<utcOffsetMin>
     return string.format("H:%s,%s,%s,%s,%s,%s,%d,%d",
