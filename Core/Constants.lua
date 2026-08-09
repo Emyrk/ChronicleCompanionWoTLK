@@ -43,6 +43,12 @@ Chronicle.C = {
     RELAY_FAILEDTYPE_ARG = 12, -- select(12, ...) in SPELL_CAST_FAILED
 
     -- -----------------------------------------------------------------
+    -- Vehicle attribution
+    -- -----------------------------------------------------------------
+    VEHICLE_PROVIDER_PRIORITY = 2,
+    VEHICLE_CHANGE_QUEUE_MAX  = 100,
+
+    -- -----------------------------------------------------------------
     -- Vehicle inspect diagnostics
     -- -----------------------------------------------------------------
     PARTY_MEMBER_MAX            = 4,

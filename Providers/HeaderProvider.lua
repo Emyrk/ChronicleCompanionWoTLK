@@ -5,7 +5,7 @@
 -- realm, locale, client build, and a session ID so the server can group
 -- log segments from the same play session.
 --
--- Priority 2 (after Zone, before PlayerList).
+-- Priority 3 (after Reset and Zone/Vehicle, before PlayerList).
 -- Dirty at session start and every 30 minutes.
 --
 -- Payload format:

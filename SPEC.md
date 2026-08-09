@@ -56,7 +56,7 @@ Valid separators: `,` `:` `.` `;` `-` `_` and all alphanumerics.
 
 ### Z -- Zone Info
 
-Emitted by: `ZoneProvider` (priority 1)
+Emitted by: `ZoneProvider` (priority 2)
 Re-emit: on zone change + every 10 minutes
 
 ```
@@ -86,7 +86,7 @@ Z:Dalaran,none,0,,0,0,0,571,0,The Violet Citadel
 
 ### H -- Session Header
 
-Emitted by: `HeaderProvider` (priority 2)
+Emitted by: `HeaderProvider` (priority 3)
 Re-emit: on login + every 30 minutes
 
 ```
@@ -109,9 +109,43 @@ H:0.1,Icecrown,enUS,3.3.5a,12340,a8f3
 
 ---
 
+### V -- Vehicle Control Change
+
+Emitted by: `VehicleProvider` (priority 2)
+Event-driven only. Repeated observations of the same assignment are deduplicated.
+
+```
+V<timestampMs>,<action>,<vehicleGuid>,<controllerGuid>,<vehicleName>,<controllerName>
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| timestampMs | number | Approximate Unix epoch milliseconds when the addon observed the change, not when the relay landed it |
+| action | string | `A` = assign control, `R` = release control |
+| vehicleGuid | string | Vehicle, turret, or other controlled-unit GUID used by CLEU |
+| controllerGuid | string | Controlling character GUID |
+| vehicleName | string | Vehicle or turret name at observation time |
+| controllerName | string | Character name at observation time |
+
+Examples:
+
+```
+V1786244400123,A,0xF150008124016D18,0x000000000000000A,Salvaged Siege Engine,Chronicle
+V1786244415440,R,0xF150008124016D18,0x000000000000000A,Salvaged Siege Engine,Chronicle
+```
+
+Mappings are time-dependent. The same vehicle or turret GUID can be released by
+one character and later assigned to another. Consumers must apply records in
+observed timestamp/order and must not treat the mapping as session-global.
+
+The timestamp is embedded because relay delivery depends on naturally occurring
+cast failures and may be disconnected from the actual vehicle transition.
+
+---
+
 ### P -- Player Data (CI Segments)
 
-Emitted by: `PlayerListProvider` (priority 3)
+Emitted by: `PlayerListProvider` (priority 4)
 Each message is ONE segment for ONE player.
 
 ```
@@ -283,7 +317,7 @@ P0x060000000008DCCC;A2v2.Team Name.1850.120.85.1820:3v3.Other Team.2100.50.30.20
 
 ### L -- Loot / Trade
 
-Emitted by: `LootProvider` (priority 4)
+Emitted by: `LootProvider` (priority 5)
 Event-driven only (no periodic re-emit)
 Filters: Uncommon (quality 2) and above
 Queue sorted by quality: Legendary > Epic > Rare > Uncommon
@@ -314,7 +348,7 @@ LL,5,32837,1,Rhyd
 
 ### M -- Meta (Relay Stats)
 
-Emitted by: `MetaProvider` (priority 5)
+Emitted by: `MetaProvider` (priority 6)
 Re-emit: every 5 minutes
 
 ```

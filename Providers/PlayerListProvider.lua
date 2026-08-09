@@ -8,7 +8,7 @@
 -- Poll() snapshots the data at call time and returns ONE segment for ONE
 -- player -- the most urgent segment for the most urgent player.
 --
--- Priority 3 (after Zone and Header).
+-- Priority 4 (after Reset, Zone/Vehicle, and Header).
 -- =============================================================================
 
 local C       = Chronicle.C

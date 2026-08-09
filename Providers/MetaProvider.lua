@@ -5,7 +5,7 @@
 -- is performing.  Reports landed chunk counts from the rolling 10-minute
 -- bucket history.
 --
--- Priority 5 (lowest -- after all real data).
+-- Priority 6 (lowest -- after all real data).
 -- Re-emits every 5 minutes.
 --
 -- Payload format:
