@@ -325,7 +325,8 @@ local function handleInspect(tokens)
     local unitInput = tokens[3]
 
     if not sub then
-        Log:Info("Usage: /chron inspect <ui|gear|talents|glyphs|guild|pet|honor|arena|ci|probe> [unit]")
+        Log:Info("Usage: /chron inspect <ui|gear|talents|glyphs|guild|pet|vehicle|honor|arena|ci|probe> [unit]")
+        Log:Info("  /chron inspect vehicle <snapshot|watch|stop|dump|clear>")
         return
     end
 
@@ -372,6 +373,27 @@ local function handleInspect(tokens)
             Log:Info("Pet for %s: none", unit)
         end
 
+    elseif sub == "vehicle" then
+        local VehicleInspect = Chronicle.VehicleInspect
+        local action = tokens[3] or "snapshot"
+        if not VehicleInspect then
+            Log:Warn("Vehicle inspect module not loaded")
+            return
+        end
+        if action == "snapshot" then
+            VehicleInspect:Snapshot("slash")
+        elseif action == "watch" then
+            VehicleInspect:StartWatch()
+        elseif action == "stop" then
+            VehicleInspect:StopWatch()
+        elseif action == "dump" then
+            VehicleInspect:Dump()
+        elseif action == "clear" then
+            VehicleInspect:Clear()
+        else
+            Log:Info("Usage: /chron inspect vehicle <snapshot|watch|stop|dump|clear>")
+        end
+
     elseif sub == "honor" then
         local honor = Capture.ScanHonor()
         Log:Info("Honor (local player):")
@@ -412,7 +434,7 @@ local function handleInspect(tokens)
 
     else
         Log:Info("Unknown inspect sub-command: '%s'", sub)
-        Log:Info("Usage: /chron inspect <ui|gear|talents|glyphs|guild|pet|honor|arena|ci|probe> [unit]")
+        Log:Info("Usage: /chron inspect <ui|gear|talents|glyphs|guild|pet|vehicle|honor|arena|ci|probe> [unit]")
     end
 end
 

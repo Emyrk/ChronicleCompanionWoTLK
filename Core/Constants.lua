@@ -43,6 +43,16 @@ Chronicle.C = {
     RELAY_FAILEDTYPE_ARG = 12, -- select(12, ...) in SPELL_CAST_FAILED
 
     -- -----------------------------------------------------------------
+    -- Vehicle inspect diagnostics
+    -- -----------------------------------------------------------------
+    PARTY_MEMBER_MAX            = 4,
+    RAID_MEMBER_MAX             = 40,
+    VEHICLE_SEAT_BUTTON_MAX     = 10,
+    VEHICLE_INSPECT_RECORD_MAX  = 100,
+    VEHICLE_INSPECT_MAPPING_MAX = 100,
+    VEHICLE_INSPECT_DUMP_MAX    = 40,
+
+    -- -----------------------------------------------------------------
     -- SPELL_FAILED_* globals to hijack
     --
     -- 44 globals.  The engine

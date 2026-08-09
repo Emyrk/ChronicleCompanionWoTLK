@@ -81,5 +81,31 @@ end
 --- Access the raw event frame (for OnUpdate or other frame-level needs).
 Chronicle.eventFrame = eventFrame
 
+-- ---------------------------------------------------------------------------
+-- Shared next-frame callbacks
+--
+-- Vehicle unit tokens can change during an enter/exit event. Modules use this
+-- queue to sample once after the event without creating their own frames or
+-- replacing another module's OnUpdate handler.
+-- ---------------------------------------------------------------------------
+
+local nextFrameCallbacks = {}
+
+function Chronicle.RunNextFrame(fn)
+    if type(fn) ~= "function" then return end
+    nextFrameCallbacks[#nextFrameCallbacks + 1] = fn
+    eventFrame:SetScript("OnUpdate", function(self)
+        self:SetScript("OnUpdate", nil)
+        local pending = nextFrameCallbacks
+        nextFrameCallbacks = {}
+        for i = 1, #pending do
+            local ok, err = pcall(pending[i])
+            if not ok and Chronicle.Logger then
+                Chronicle.Logger:Warn("Next-frame callback error: %s", tostring(err))
+            end
+        end
+    end)
+end
+
 -- Boot message and slash registration live in Init.lua (last file in the TOC)
 -- so they work even if a Capture module errors at load time.

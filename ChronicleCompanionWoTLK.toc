@@ -17,6 +17,7 @@ Capture\GearScan.lua
 Capture\TalentScan.lua
 Capture\GlyphScan.lua
 Capture\CIFormat.lua
+Capture\VehicleInspect.lua
 Capture\LocalScan.lua
 
 Transport\Relay.lua

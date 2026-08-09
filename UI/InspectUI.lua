@@ -321,6 +321,55 @@ local function dumpArena()
     end
 end
 
+local function vehicleOutput(text)
+    out(text)
+end
+
+local function dumpVehicleSnapshot()
+    local VehicleInspect = Chronicle.VehicleInspect
+    if not VehicleInspect then
+        out("Vehicle inspect module not loaded", C_ERROR[1], C_ERROR[2], C_ERROR[3])
+        return
+    end
+    VehicleInspect:Snapshot("inspect-ui", vehicleOutput)
+end
+
+local function startVehicleWatch()
+    local VehicleInspect = Chronicle.VehicleInspect
+    if not VehicleInspect then
+        out("Vehicle inspect module not loaded", C_ERROR[1], C_ERROR[2], C_ERROR[3])
+        return
+    end
+    VehicleInspect:StartWatch(vehicleOutput)
+end
+
+local function stopVehicleWatch()
+    local VehicleInspect = Chronicle.VehicleInspect
+    if not VehicleInspect then
+        out("Vehicle inspect module not loaded", C_ERROR[1], C_ERROR[2], C_ERROR[3])
+        return
+    end
+    VehicleInspect:StopWatch(vehicleOutput)
+end
+
+local function clearVehicleHistory()
+    local VehicleInspect = Chronicle.VehicleInspect
+    if not VehicleInspect then
+        out("Vehicle inspect module not loaded", C_ERROR[1], C_ERROR[2], C_ERROR[3])
+        return
+    end
+    VehicleInspect:Clear(vehicleOutput)
+end
+
+local function dumpVehicleHistory()
+    local VehicleInspect = Chronicle.VehicleInspect
+    if not VehicleInspect then
+        out("Vehicle inspect module not loaded", C_ERROR[1], C_ERROR[2], C_ERROR[3])
+        return
+    end
+    VehicleInspect:Dump(vehicleOutput)
+end
+
 local function dumpFullCI()
     local unit = getUnit()
     withInspect(unit, function()
@@ -386,6 +435,14 @@ local BUTTONS_ROW2 = {
     { "Honor",   dumpHonor },
     { "Arena",   dumpArena },
     { "Full CI", dumpFullCI },
+}
+
+local BUTTONS_ROW3 = {
+    { "Veh Snap",  dumpVehicleSnapshot },
+    { "Veh Watch", startVehicleWatch },
+    { "Veh Stop",  stopVehicleWatch },
+    { "Veh Clear", clearVehicleHistory },
+    { "Veh Dump",  dumpVehicleHistory },
 }
 
 -- ---------------------------------------------------------------------------
@@ -500,6 +557,19 @@ local function buildFrame()
     btnRowY = btnRowY - (BUTTON_H + BUTTON_PAD)
     prevBtn = nil
     for i, def in ipairs(BUTTONS_ROW2) do
+        local btn = createButton(f, def[1], def[2], BUTTON_W)
+        if i == 1 then
+            btn:SetPoint("TOPLEFT", f, "TOPLEFT", OUTPUT_INSET, btnRowY)
+        else
+            btn:SetPoint("LEFT", prevBtn, "RIGHT", BUTTON_PAD, 0)
+        end
+        prevBtn = btn
+    end
+
+    -- ---- Vehicle diagnostics -- row 3 ----
+    btnRowY = btnRowY - (BUTTON_H + BUTTON_PAD)
+    prevBtn = nil
+    for i, def in ipairs(BUTTONS_ROW3) do
         local btn = createButton(f, def[1], def[2], BUTTON_W)
         if i == 1 then
             btn:SetPoint("TOPLEFT", f, "TOPLEFT", OUTPUT_INSET, btnRowY)
