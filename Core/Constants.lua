@@ -35,6 +35,9 @@ Chronicle.C = {
     -- -----------------------------------------------------------------
     -- Scan / retry timing
     -- -----------------------------------------------------------------
+    RELAY_ACTIVATION_DELAY_SEC = 5,   -- let the combat-log file writer settle
+    HEADER_INITIAL_REEMIT_SEC  = 60,  -- quick recovery copy after first header
+    HEADER_REEMIT_SEC          = 300, -- steady-state header refresh
     IDENTITY_RETRY_SEC = 3,    -- fast re-poll when UnitName/UnitClass return nil
 
     -- -----------------------------------------------------------------

@@ -87,7 +87,7 @@ Z:Dalaran,none,0,,0,0,0,571,0,The Violet Citadel
 ### H -- Session Header
 
 Emitted by: `HeaderProvider` (priority 3)
-Re-emit: on login + every 30 minutes
+Re-emit: on relay activation, 1 minute after the first emit, then every 5 minutes
 
 ```
 H:<addonVersion>,<realm>,<locale>,<wowVersion>,<wowBuild>,<sessionId>

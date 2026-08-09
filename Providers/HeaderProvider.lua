@@ -6,7 +6,8 @@
 -- log segments from the same play session.
 --
 -- Priority 3 (after Reset and Zone, before Vehicle and PlayerList).
--- Dirty at session start and every 30 minutes.
+-- Dirty on relay activation. After the first emit, retries at 1 minute, then
+-- settles into a 5-minute refresh cadence.
 --
 -- Payload format:
 --   H:<addonVersion>,<realm>,<locale>,<wowVersion>,<wowBuild>,<sessionId>,<localEpoch>,<utcOffsetMin>
@@ -38,10 +39,11 @@ local P = {
 -- State
 -- ---------------------------------------------------------------------------
 
-local dirty       = true       -- dirty on load (first session)
-local lastEmitAt  = 0
-local REEMIT_SEC  = 1800       -- re-emit every 30 minutes
-local sessionId   = nil        -- generated on PLAYER_LOGIN
+local dirty          = true       -- dirty on load (first session)
+local lastEmitAt     = 0
+local emitCount      = 0
+local timerGeneration = 0
+local sessionId      = nil        -- generated on PLAYER_LOGIN
 
 local Util = Chronicle.Util
 
@@ -114,10 +116,28 @@ function P:Label()
     return "Header"
 end
 
+local function currentReemitSec()
+    if emitCount <= 1 then
+        return Chronicle.C.HEADER_INITIAL_REEMIT_SEC
+    end
+    return Chronicle.C.HEADER_REEMIT_SEC
+end
+
+local function scheduleReemit()
+    timerGeneration = timerGeneration + 1
+    local generation = timerGeneration
+    local delay = currentReemitSec()
+    Chronicle.RunAfter(delay, function()
+        if generation == timerGeneration then
+            P:MarkDirty()
+        end
+    end)
+end
+
 --- @treturn number 0 if clean, 1 if dirty or past re-emit timer
 function P:Dirty()
     if dirty then return 1 end
-    if (time() - lastEmitAt) >= REEMIT_SEC then return 1 end
+    if (time() - lastEmitAt) >= currentReemitSec() then return 1 end
     return 0
 end
 
@@ -125,8 +145,9 @@ end
 function P:Poll()
     local now = time()
 
-    -- Periodic re-emit
-    if not dirty and (now - lastEmitAt) >= REEMIT_SEC then
+    -- Periodic re-emit. The quick second copy recovers from a startup carrier
+    -- that CLEU observed but the file writer did not persist.
+    if not dirty and (now - lastEmitAt) >= currentReemitSec() then
         dirty = true
     end
 
@@ -136,6 +157,9 @@ function P:Poll()
 
     dirty = false
     lastEmitAt = now
+    emitCount = emitCount + 1
+
+    scheduleReemit()
 
     local summary = "HDR " .. (sessionId or "?")
 
@@ -150,13 +174,15 @@ function P:MarkDirty()
 end
 
 --- Return current state for UI/debug.
--- @treturn table { dirty, lastEmitAt, reemitSec, sessionId }
+-- @treturn table { dirty, lastEmitAt, reemitSec, emitCount, sessionId }
 function P:GetState()
     return {
         dirty       = dirty,
         lastPayload = nil,
         lastEmitAt  = lastEmitAt,
-        reemitSec   = REEMIT_SEC,
+        reemitSec   = currentReemitSec(),
+        emitCount   = emitCount,
+        timerGeneration = timerGeneration,
         sessionId   = sessionId,
     }
 end

@@ -81,29 +81,57 @@ end
 Chronicle.eventFrame = eventFrame
 
 -- ---------------------------------------------------------------------------
--- Shared next-frame callbacks
+-- Shared callback scheduler
 --
--- Vehicle unit tokens can change during an enter/exit event. Modules use this
--- queue to sample once after the event without creating their own frames or
--- replacing another module's OnUpdate handler.
+-- Modules use this instead of creating timer frames or replacing the shared
+-- dispatcher's OnUpdate handler. A zero delay always runs on a later frame.
 -- ---------------------------------------------------------------------------
 
-local nextFrameCallbacks = {}
+local scheduledCallbacks = {}
 
-function Chronicle.RunNextFrame(fn)
-    if type(fn) ~= "function" then return end
-    nextFrameCallbacks[#nextFrameCallbacks + 1] = fn
-    eventFrame:SetScript("OnUpdate", function(self)
-        self:SetScript("OnUpdate", nil)
-        local pending = nextFrameCallbacks
-        nextFrameCallbacks = {}
-        for i = 1, #pending do
-            local ok, err = pcall(pending[i])
-            if not ok and Chronicle.Logger then
-                Chronicle.Logger:Warn("Next-frame callback error: %s", tostring(err))
-            end
+local function runScheduledCallbacks(self, elapsed)
+    local remaining = {}
+    local due = {}
+
+    for i = 1, #scheduledCallbacks do
+        local entry = scheduledCallbacks[i]
+        entry.delay = entry.delay - elapsed
+        if entry.delay <= 0 then
+            due[#due + 1] = entry.fn
+        else
+            remaining[#remaining + 1] = entry
         end
-    end)
+    end
+    scheduledCallbacks = remaining
+
+    for i = 1, #due do
+        local ok, err = pcall(due[i])
+        if not ok and Chronicle.Logger then
+            Chronicle.Logger:Warn("Scheduled callback error: %s", tostring(err))
+        end
+    end
+
+    if #scheduledCallbacks == 0 then
+        self:SetScript("OnUpdate", nil)
+    end
+end
+
+--- Run a callback after a delay using the shared event frame.
+--- @tparam number delay seconds to wait; zero runs on the next frame
+--- @tparam function fn callback
+function Chronicle.RunAfter(delay, fn)
+    if type(fn) ~= "function" then return end
+    scheduledCallbacks[#scheduledCallbacks + 1] = {
+        delay = math.max(tonumber(delay) or 0, 0),
+        fn = fn,
+    }
+    eventFrame:SetScript("OnUpdate", runScheduledCallbacks)
+end
+
+--- Run a callback on the next frame.
+--- @tparam function fn callback
+function Chronicle.RunNextFrame(fn)
+    Chronicle.RunAfter(0, fn)
 end
 
 -- Boot message and slash registration live in Init.lua (last file in the TOC)

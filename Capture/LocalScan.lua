@@ -549,7 +549,8 @@ local function slashHandler(msg)
                 return
             end
             local m = Relay:GetMetrics()
-            local state = Relay:IsActive() and "ACTIVE" or "inactive"
+            local state = Relay:IsActive() and "ACTIVE"
+                or (Relay:IsActivationPending() and "WAITING" or "inactive")
 
             local landed, total = Relay:GetActiveProgress()
             local label = Relay:GetActiveLabel()
@@ -567,7 +568,14 @@ local function slashHandler(msg)
 
         if sub == "activate" then
             Relay:Activate()
-            Log:Info("Relay force-activated")
+            if Relay:IsActivationPending() then
+                Log:Info("Relay activation requested -- waiting %ds for combat-log writer",
+                    Chronicle.C.RELAY_ACTIVATION_DELAY_SEC)
+            elseif Relay:IsActive() then
+                Log:Info("Relay already active")
+            else
+                Log:Warn("Relay requires combat logging to be enabled")
+            end
             return
         end
 

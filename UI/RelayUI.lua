@@ -107,7 +107,11 @@ local function refresh()
 
     -- Status line
     local state = "INACTIVE"
-    if Relay:IsActive() then state = "|cff44ff44ACTIVE|r" end
+    if Relay:IsActive() then
+        state = "|cff44ff44ACTIVE|r"
+    elseif Relay:IsActivationPending() then
+        state = "|cffffff00WAITING|r"
+    end
     local logging = LoggingCombat() and "|cff44ff44ON|r" or "|cffff4444OFF|r"
     local numGlobals = Chronicle.C and #Chronicle.C.HIJACK_GLOBALS or 0
     statusText:SetText(string.format("Status: %s    CombatLog: %s    Globals: %d    Last land: %s",
