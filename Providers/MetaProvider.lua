@@ -5,7 +5,7 @@
 -- is performing.  Reports landed chunk counts from the rolling 10-minute
 -- bucket history.
 --
--- Priority 6 (lowest -- after all real data).
+-- Lowest priority -- after all real data.
 -- Re-emits every 5 minutes.
 --
 -- Payload format:
@@ -21,7 +21,7 @@ local Log   = Chronicle.Logger
 local Relay = Chronicle.Relay
 
 local P = {
-    priority = 6,
+    priority = Chronicle.C.META_PROVIDER_PRIORITY,
 }
 
 -- ---------------------------------------------------------------------------

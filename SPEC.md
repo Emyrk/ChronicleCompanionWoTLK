@@ -346,9 +346,31 @@ LL,5,32837,1,Rhyd
 
 ---
 
+### RG -- Raid Group Layout
+
+Emitted by: `RaidGroupProvider` (priority 6)
+Re-emit: while in a raid, on zone changes and when membership or subgroup placement changes
+
+```
+RG:<group1-slot1>,...,<group1-slot5>,<group2-slot1>,...,<group8-slot5>
+```
+
+The payload always contains 40 comma-separated GUID fields arranged as eight
+five-player subgroup blocks. Empty subgroup positions are empty fields. Members
+within a subgroup are ordered by their current raid roster index. GUID fields
+contain only hexadecimal digits, omitting both the `0x` prefix and leading
+zeroes. No numeric conversion is used.
+
+Example (abbreviated):
+```
+RG:8DCCC,,,,,8EFE8,...
+```
+
+---
+
 ### M -- Meta (Relay Stats)
 
-Emitted by: `MetaProvider` (priority 6)
+Emitted by: `MetaProvider` (priority 7)
 Re-emit: every 5 minutes
 
 ```
@@ -371,14 +393,16 @@ M5,12,8,15,3,0,0,0,0,0,0
 
 | Priority | Provider | Typical size | Chunks |
 |----------|----------|-------------|--------|
-| 1 | Zone | ~80 chars | 1 |
-| 2 | Header | ~50 chars | 1 |
-| 3 | PlayerList (per segment) | 30-700 chars | 1-3 |
-| 4 | Loot | ~30 chars | 1 |
-| 5 | Meta | ~25 chars | 1 |
+| 1 | Reset | ~15 chars | 1 |
+| 2 | Zone | ~80 chars | 1 |
+| 3 | Header / Vehicle | ~50 chars | 1 |
+| 4 | PlayerList (per segment) | 30-700 chars | 1-3 |
+| 5 | Loot | ~30 chars | 1 |
+| 6 | RaidGroup | ~760 chars | 3-4 |
+| 7 | Meta | ~25 chars | 1 |
 
-Only Gear segments (G) typically span multiple chunks. All other messages
-fit in a single slot and are candidates for bin-packing.
+Gear segments (G) and full RaidGroup layouts commonly span multiple chunks.
+Other messages normally fit in one slot and are candidates for bin-packing.
 
 ---
 

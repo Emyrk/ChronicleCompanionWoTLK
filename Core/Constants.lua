@@ -46,10 +46,26 @@ Chronicle.C = {
     RELAY_FAILEDTYPE_ARG = 12, -- select(12, ...) in SPELL_CAST_FAILED
 
     -- -----------------------------------------------------------------
+    -- Provider priorities
+    -- -----------------------------------------------------------------
+    VEHICLE_PROVIDER_PRIORITY    = 3,
+    RAID_GROUP_PROVIDER_PRIORITY = 6,
+    META_PROVIDER_PRIORITY       = 7,
+
+    -- -----------------------------------------------------------------
+    -- Raid composition
+    -- -----------------------------------------------------------------
+    -- Eight fixed five-player groups preserve subgroup boundaries. Roster
+    -- events can precede raid-unit hydration, so retry briefly before emit.
+    RAID_GROUP_MAX                = 8,
+    RAID_GROUP_SLOT_MAX           = 5,
+    RAID_GROUP_RETRY_SEC          = 0.25,
+    RAID_GROUP_RETRY_MAX_ATTEMPTS = 8,
+
+    -- -----------------------------------------------------------------
     -- Vehicle attribution
     -- -----------------------------------------------------------------
-    VEHICLE_PROVIDER_PRIORITY = 3,
-    VEHICLE_CHANGE_QUEUE_MAX  = 100,
+    VEHICLE_CHANGE_QUEUE_MAX = 100,
 
     -- -----------------------------------------------------------------
     -- Vehicle inspect diagnostics
