@@ -1,7 +1,7 @@
 ## Interface: 30300
 ## Title: ChronicleCompanionWoTLK
 ## Notes: Companion addon for ChronicleClassic.com - WotLK 3.3.5a
-## Version: 0.7
+## Version: 0.8
 ## DefaultState: enabled
 ## Author: Emyrk
 ## SavedVariables: ChronicleCompanionWoTLKDB
@@ -32,6 +32,7 @@ Providers\PlayerListProvider.lua
 Providers\LootProvider.lua
 
 Providers\ResetProvider.lua
+Providers\RaidGroupProvider.lua
 Providers\MetaProvider.lua
 
 UI\MinimapButton.lua
