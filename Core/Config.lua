@@ -23,10 +23,11 @@ Chronicle.Config = Config
 -- ---------------------------------------------------------------------------
 
 local ACCOUNT_DEFAULTS = {
-    log_level       = "error",        -- error | warn | info | debug
-    log_window      = 1,              -- ChatFrame index (1-10)
-    auto_combatlog_raid    = true,    -- auto-enable LoggingCombat in raids
-    auto_combatlog_dungeon = true,   -- auto-enable LoggingCombat in dungeons
+    log_level                 = "error", -- error | warn | info | debug
+    log_window                = 1,       -- ChatFrame index (1-10)
+    auto_combatlog_raid       = true,    -- auto-enable LoggingCombat in raids
+    auto_combatlog_dungeon    = true,    -- auto-enable LoggingCombat in dungeons
+    position_telemetry_enabled = true,   -- persist group positions for desktop upload
 }
 
 local CHAR_DEFAULTS = {
@@ -147,8 +148,12 @@ end
 --- Reset all account settings to defaults.
 function Config:ResetAll()
     if not db then return end
+    -- Position telemetry is upload data, not a user preference. Preserve it
+    -- when the settings panel resets account defaults.
+    local positionPayload = db.position_payload
     for k in pairs(db) do db[k] = nil end
     deepMerge(db, ACCOUNT_DEFAULTS)
+    if positionPayload ~= nil then db.position_payload = positionPayload end
 end
 
 -- ---------------------------------------------------------------------------

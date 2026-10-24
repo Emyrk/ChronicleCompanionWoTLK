@@ -51,8 +51,7 @@ local function fmt(msg, ...)
     return tostring(msg)
 end
 
-local function emit(level, msg, ...)
-    if LEVELS[level] > currentLevel then return end
+local function write(level, msg, ...)
     local text = fmt(msg, ...)
     local prefix = COLORS[level] .. "[Chronicle]|r "
     local frame = getChatFrame()
@@ -68,6 +67,11 @@ local function emit(level, msg, ...)
     end
 end
 
+local function emit(level, msg, ...)
+    if LEVELS[level] > currentLevel then return end
+    write(level, msg, ...)
+end
+
 -- ---------------------------------------------------------------------------
 -- Public API
 -- ---------------------------------------------------------------------------
@@ -81,6 +85,12 @@ function Logger:Error(msg, ...) emit("error", msg, ...) end
 -- @tparam string msg format string
 -- @param ... format arguments
 function Logger:Warn(msg, ...)  emit("warn",  msg, ...) end
+
+--- Log an always-visible warning regardless of configured verbosity.
+-- Use for user-actionable data-loss or capacity warnings only.
+-- @tparam string msg format string
+-- @param ... format arguments
+function Logger:Alert(msg, ...) write("warn", msg, ...) end
 
 --- Log an informational message.  Prints at info level or above.
 -- @tparam string msg format string

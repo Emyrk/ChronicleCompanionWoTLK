@@ -79,6 +79,28 @@ Chronicle.C = {
     VEHICLE_INSPECT_DUMP_MAX    = 40,
 
     -- -----------------------------------------------------------------
+    -- Position telemetry SavedVariables
+    --
+    -- Positions are captured once per second only while both combat logging
+    -- and player combat are active. A tick stores one epoch/map header plus
+    -- dictionary-indexed GUID/x/y records for the visible party or raid.
+    -- Fifty units for one continuous hour are about 1.5 MiB encoded.
+    -- -----------------------------------------------------------------
+    POSITION_SCHEMA_VERSION        = 1,
+    POSITION_SAMPLE_INTERVAL_SEC   = 1,
+    POSITION_UNIT_MAX              = 50,
+    POSITION_BLOCK_TICKS           = 60,
+    POSITION_GUID_INDEX_WIDTH      = 2,
+    POSITION_GUID_MAX              = 1296,    -- 36^2 dictionary entries
+    POSITION_COORD_SCALE           = 10000,
+    POSITION_COORD_WIDTH           = 3,
+    POSITION_MAP_WIDTH             = 3,
+    POSITION_STORE_WARN_BYTES      = 3145728, -- 3 MiB
+    POSITION_STORE_CRITICAL_BYTES  = 3670016, -- 3.5 MiB
+    POSITION_STORE_MAX_BYTES       = 4128768, -- 4 MiB file budget less 64 KiB syntax margin
+    POSITION_MISSING_WARN_SAMPLES  = 10,
+
+    -- -----------------------------------------------------------------
     -- SPELL_FAILED_* globals to hijack
     --
     -- 44 globals.  The engine

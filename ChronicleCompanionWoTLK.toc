@@ -12,6 +12,7 @@ Core\Constants.lua
 Core\Logger.lua
 Core\Config.lua
 Core\Util.lua
+Core\PositionStore.lua
 
 Capture\GearScan.lua
 Capture\TalentScan.lua
@@ -20,6 +21,7 @@ Capture\CIFormat.lua
 Capture\VehicleTracker.lua
 Capture\VehicleInspect.lua
 Capture\LocalScan.lua
+Capture\PositionTelemetry.lua
 
 Transport\Relay.lua
 

@@ -443,3 +443,74 @@ for each SPELL_CAST_FAILED row in combat log:
     -- After stripping one complete message, check if remainder
     -- starts with "[" + digit for another message in the same field.
 ```
+
+---
+
+## SavedVariables Position Payload
+
+Position telemetry does not use the failed-cast transport. It is stored under:
+
+```text
+ChronicleCompanionWoTLKDB.position_payload
+```
+
+The account-wide table is uploaded beside `WoWCombatLog.txt` after WoW exits.
+After both files upload successfully, the desktop application deletes the combat
+log and removes only the `position_payload` key from the SavedVariables file.
+The addon recreates an empty payload on the next login.
+
+Capture runs once per second only while both `LoggingCombat()` and
+`UnitAffectingCombat("player")` are true. Each tick contains one epoch timestamp,
+one map ID, and the available GUID/x/y positions for the visible party or raid.
+The map ID is required because normalized x/y coordinates are only meaningful in
+the map coordinate space where they were observed.
+
+### Table shape
+
+```lua
+position_payload = {
+    schema_version = 1,
+    encoding = "b36-v1",
+    guids = { "0x0000000000000001", "0x0000000000000002" },
+    chunks = { "<encoded ticks>", "<encoded ticks>" },
+    current_chunk_ticks = 60,
+    tick_count = 120,
+    position_count = 6000,
+    encoded_bytes = 49700,
+    missing_positions = 0,
+    skipped_positions = 0,
+    skipped_ticks = 0,
+    capped = false,
+}
+```
+
+`chunks` are internal string blocks of at most 60 ticks. They limit Lua string
+copying and SavedVariables table overhead; they are not upload batches. The
+uploader processes every chunk in order as one position stream.
+
+### `b36-v1` encoding
+
+All numeric fields use lowercase base36.
+
+```text
+<epochMs>:<mapId3>:<position8><position8>...;
+```
+
+Each position is fixed-width:
+
+```text
+<guidIndex2><x3><y3>
+```
+
+- `epochMs`: observation time in epoch milliseconds, variable-width base36.
+- `mapId3`: map area ID, left-padded to three base36 characters.
+- `guidIndex2`: zero-based index into `guids`, left-padded to two characters.
+- `x3`, `y3`: normalized coordinates multiplied by 10,000 and rounded, each
+  left-padded to three characters.
+- `;`: tick terminator.
+
+At 50 units sampled every second, one tick is approximately 415 bytes. One hour
+is approximately 1.50 MB of encoded position data plus small SavedVariables
+syntax overhead. The store warns at 3 MiB and 3.5 MiB, then stops encoded data
+at 3.94 MiB. The remaining 64 KiB of the 4 MiB file budget is reserved for Lua
+SavedVariables syntax and metadata. Previously captured data is never deleted.

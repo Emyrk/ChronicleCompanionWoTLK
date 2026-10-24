@@ -7,14 +7,13 @@
 -- =============================================================================
 
 local C = Chronicle.C
+local Util = Chronicle.Util
 local T = {}
 Chronicle.VehicleTracker = T
 
 local activeByVehicle = {}
 local listeners = {}
 local nextFramePending = false
-local epochAnchor = time()
-local uptimeAnchor = GetTime()
 
 local REFRESH_EVENTS = {
     "UNIT_ENTERING_VEHICLE",
@@ -36,21 +35,6 @@ local function api(name, ...)
     local ok, a, b, c = pcall(fn, ...)
     if not ok then return nil end
     return a, b, c
-end
-
-local function timestampMs()
-    local elapsed = (api("GetTime") or uptimeAnchor) - uptimeAnchor
-    local wholeSeconds = math.floor(elapsed)
-    local milliseconds = math.floor((elapsed - wholeSeconds) * 1000 + 0.5)
-    if milliseconds >= 1000 then
-        wholeSeconds = wholeSeconds + 1
-        milliseconds = 0
-    end
-
-    -- Avoid formatting a 13-digit value through %d: WoW's Lua 5.1 build can
-    -- route integer formats through a 32-bit C integer. Joining epoch seconds
-    -- and a zero-padded fraction keeps the millisecond timestamp exact.
-    return tostring(epochAnchor + wholeSeconds) .. string.format("%03d", milliseconds)
 end
 
 local function contextRank(context)
@@ -162,7 +146,7 @@ end
 --- Reconcile visible unit-token pairs against the active control state.
 --- @tparam[opt] string reason event or caller that triggered the refresh
 function T:Refresh(reason)
-    local observedAt = timestampMs()
+    local observedAt = Util.TimestampMs()
     local observed = scanVisible()
 
     for vehicleGUID, previous in pairs(activeByVehicle) do
