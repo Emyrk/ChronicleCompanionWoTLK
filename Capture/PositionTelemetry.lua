@@ -81,22 +81,25 @@ local function restoreMap(continent, zone, dungeonLevel)
 end
 
 local function collectPositions()
+    local units = rosterUnits()
     local oldContinent = api("GetCurrentMapContinent")
     local oldZone = api("GetCurrentMapZone")
     local oldDungeonLevel = api("GetCurrentMapDungeonLevel")
     local changedMap = false
 
     local playerX, playerY = api("GetPlayerMapPosition", "player")
-    if (not playerX or not playerY or (playerX == 0 and playerY == 0))
-        and not mapFrameIsVisible()
-        and type(SetMapToCurrentZone) == "function"
-    then
-        api("SetMapToCurrentZone")
+    if not playerX or not playerY or (playerX == 0 and playerY == 0) then
+        -- Never sample a user-selected map as if it were the player's current
+        -- coordinate space. Wait until the world map is hidden instead.
+        if mapFrameIsVisible() or type(SetMapToCurrentZone) ~= "function" then
+            return 0, {}, #units
+        end
+        local ok = pcall(SetMapToCurrentZone)
+        if not ok then return 0, {}, #units end
         changedMap = true
     end
 
     local mapId = tonumber(api("GetCurrentMapAreaID")) or 0
-    local units = rosterUnits()
     local positions = {}
     local missing = 0
 

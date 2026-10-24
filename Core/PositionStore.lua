@@ -277,6 +277,10 @@ function Store:AppendTick(timestampMs, mapId, positions)
     payload.position_count = payload.position_count + #records
     payload.encoded_bytes = payload.encoded_bytes + addedBytes
     warnAtThresholds()
+    if payload.encoded_bytes >= C.POSITION_STORE_MAX_BYTES then
+        payload.capped = true
+        warnAtCap()
+    end
     return true
 end
 

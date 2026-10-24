@@ -87,6 +87,22 @@ add("existing GUIDs are reused across ticks and blocks", function()
     T.equal(db.position_payload.tick_count, 61)
 end)
 
+add("an append that exactly fills the cap marks the payload capped", function()
+    local position = pos("0x0000000000000001", 0.25, 0.75)
+    local baseline = loadStore({ warn = 1000000, critical = 1000001, max = 1000002 })
+    T.truthy(baseline:AppendTick("1786244400000", 631, { position }))
+    local exactBytes = baseline:GetStatus().encoded_bytes
+
+    local store = loadStore({
+        warn = exactBytes,
+        critical = exactBytes,
+        max = exactBytes,
+    })
+    T.truthy(store:AppendTick("1786244400000", 631, { position }))
+    T.truthy(store:IsCapped())
+    T.equal(store:GetStatus().encoded_bytes, exactBytes)
+end)
+
 add("warnings fire once and the hard cap preserves existing data", function()
     local store, db, warnings = loadStore({ warn = 40, critical = 70, max = 105 })
     local position = pos("0x0000000000000001", 0.25, 0.75)

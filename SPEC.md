@@ -448,6 +448,9 @@ for each SPELL_CAST_FAILED row in combat log:
 
 ## SavedVariables Position Payload
 
+The normative desktop/server decoding and validation contract is documented in
+[`POSITION_SPEC.md`](POSITION_SPEC.md).
+
 Position telemetry does not use the failed-cast transport. It is stored under:
 
 ```text

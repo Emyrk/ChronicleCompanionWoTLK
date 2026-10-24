@@ -10,6 +10,7 @@ local function loadTelemetry(options)
     local appended = {}
     local missing = 0
     local scheduled = {}
+    local mapSetCalls = 0
     local handlers = {}
     local positions = options.positions or {
         player = { 0.25, 0.75 },
@@ -69,8 +70,8 @@ local function loadTelemetry(options)
         if not value then return 0, 0 end
         return value[1], value[2]
     end
-    _G.WorldMapFrame = { IsShown = function() return false end }
-    _G.SetMapToCurrentZone = function() end
+    _G.WorldMapFrame = { IsShown = function() return options.worldMapVisible == true end }
+    _G.SetMapToCurrentZone = function() mapSetCalls = mapSetCalls + 1 end
     _G.GetCurrentMapContinent = function() return 1 end
     _G.GetCurrentMapZone = function() return 2 end
     _G.GetCurrentMapDungeonLevel = function() return 1 end
@@ -78,7 +79,8 @@ local function loadTelemetry(options)
     _G.SetDungeonMapLevel = function() end
 
     dofile("Capture/PositionTelemetry.lua")
-    return Chronicle.PositionTelemetry, appended, function() return missing end, scheduled, handlers
+    return Chronicle.PositionTelemetry, appended, function() return missing end,
+        scheduled, handlers, function() return mapSetCalls end
 end
 
 add("capture is gated by combat logging", function()
@@ -114,6 +116,20 @@ add("missing map coordinates are counted and omitted", function()
     T.truthy(telemetry:CaptureOnce())
     T.equal(#appended[1].samples, 1)
     T.equal(getMissing(), 1)
+end)
+
+add("visible world map prevents sampling an unrelated coordinate space", function()
+    local telemetry, appended, getMissing, _, _, getMapSetCalls = loadTelemetry({
+        worldMapVisible = true,
+        positions = {
+            player = { 0, 0 },
+            party1 = { 0.50, 0.60 },
+        },
+    })
+    T.falsy(telemetry:CaptureOnce())
+    T.equal(#appended, 0)
+    T.equal(getMissing(), 2)
+    T.equal(getMapSetCalls(), 0)
 end)
 
 add("map fallback retries after setting the current zone", function()
