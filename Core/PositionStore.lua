@@ -1,7 +1,7 @@
 -- =============================================================================
 -- Core/PositionStore.lua
 --
--- Bounded account-wide SavedVariables storage for timestamped group positions.
+-- Bounded account-wide storage for timestamped group positions and vital data.
 -- The desktop uploader sends this payload beside WoWCombatLog.txt, then removes
 -- ChronicleSidekickBridgeWoTLKDB.position_payload while the game is closed.
 -- =============================================================================
@@ -17,15 +17,19 @@ local blockedReason = nil
 local payload = nil
 local guidToIndex = {}
 
+local vitalStateByGuid = {}
 local function newPayload()
     return {
         schema_version = C.POSITION_SCHEMA_VERSION,
-        encoding = "b36-v1",
+        encoding = "b36-v2",
         guids = {},
         chunks = {},
+        state_chunks = {},
         current_chunk_ticks = 0,
+        current_state_chunk_records = 0,
         tick_count = 0,
         position_count = 0,
+        state_count = 0,
         encoded_bytes = 0,
         missing_positions = 0,
         skipped_positions = 0,
@@ -40,6 +44,7 @@ end
 local function blockCapture(reason)
     payload = nil
     guidToIndex = {}
+    vitalStateByGuid = {}
     if blockedReason ~= reason then
         Log:Alert("Position capture disabled: %s", reason)
     end
@@ -73,6 +78,9 @@ local function recalculateBytes()
     for i = 1, #payload.chunks do
         total = total + #tostring(payload.chunks[i])
     end
+    for i = 1, #payload.state_chunks do
+        total = total + #tostring(payload.state_chunks[i])
+    end
     payload.encoded_bytes = total
 end
 
@@ -98,7 +106,7 @@ end
 
 local function roundCoordinate(value)
     local n = tonumber(value)
-    if not n then return nil end
+    if not n or n ~= n then return nil end
     local scaled = math.floor(n * C.POSITION_COORD_SCALE + 0.5)
     if scaled < 0 then scaled = 0 end
     if scaled > C.POSITION_COORD_SCALE then scaled = C.POSITION_COORD_SCALE end
@@ -109,6 +117,188 @@ local function fixedBase36(value, width)
     local encoded = Util.ToBase36(value, width)
     if #encoded > width then return nil end
     return encoded
+end
+
+local function encodedOrUnknown(value, width, maximum, unknown)
+    local n = tonumber(value)
+    if not n or n ~= n or n < 0 or n > maximum then n = unknown end
+    return fixedBase36(math.floor(n), width)
+end
+
+local function percentText(value)
+    return encodedOrUnknown(value, C.POSITION_VITAL_PERCENT_WIDTH,
+        C.POSITION_VITAL_PERCENT_SCALE, C.POSITION_VITAL_PERCENT_UNKNOWN)
+end
+
+local function maxText(value)
+    return encodedOrUnknown(value, C.POSITION_VITAL_MAX_WIDTH,
+        C.POSITION_VITAL_MAX_UNKNOWN - 1, C.POSITION_VITAL_MAX_UNKNOWN)
+end
+
+local function powerTypeText(value)
+    return encodedOrUnknown(value, C.POSITION_POWER_TYPE_WIDTH,
+        C.POSITION_POWER_TYPE_UNKNOWN - 1, C.POSITION_POWER_TYPE_UNKNOWN)
+end
+
+local function rebuildTickStats()
+    local totalTicks = 0
+    local totalPositions = 0
+    local lastChunkTicks = 0
+    local recordWidth = C.POSITION_GUID_INDEX_WIDTH
+        + C.POSITION_COORD_WIDTH * 2
+        + C.POSITION_VITAL_PERCENT_WIDTH * 2
+
+    for chunkIndex = 1, #payload.chunks do
+        local chunk = payload.chunks[chunkIndex]
+        if chunk == "" or chunk:sub(-1) ~= ";" then
+            return false, "tick chunk contains malformed data"
+        end
+
+        local chunkTicks = 0
+        local offset = 1
+        while offset <= #chunk do
+            local terminator = chunk:find(";", offset, true)
+            if not terminator then return false, "tick chunk contains malformed data" end
+            local tick = chunk:sub(offset, terminator - 1)
+            local firstSeparator = tick:find(":", 1, true)
+            local secondSeparator = firstSeparator
+                and tick:find(":", firstSeparator + 1, true)
+            if not firstSeparator or firstSeparator == 1
+                or not secondSeparator
+                or secondSeparator - firstSeparator - 1 ~= C.POSITION_MAP_WIDTH
+                or tick:find(":", secondSeparator + 1, true)
+            then
+                return false, "tick chunk contains malformed data"
+            end
+
+            local timestamp = Util.FromBase36(tick:sub(1, firstSeparator - 1))
+            local mapId = Util.FromBase36(tick:sub(firstSeparator + 1, secondSeparator - 1))
+            local records = tick:sub(secondSeparator + 1)
+            if not timestamp or timestamp <= 0 or mapId == nil or records == ""
+                or #records % recordWidth ~= 0
+            then
+                return false, "tick chunk contains malformed data"
+            end
+
+            local recordCount = #records / recordWidth
+            if recordCount > C.POSITION_UNIT_MAX then
+                return false, "tick contains too many unit samples"
+            end
+
+            local seen = {}
+            for recordOffset = 1, #records, recordWidth do
+                local record = records:sub(recordOffset, recordOffset + recordWidth - 1)
+                local indexEnd = C.POSITION_GUID_INDEX_WIDTH
+                local xEnd = indexEnd + C.POSITION_COORD_WIDTH
+                local yEnd = xEnd + C.POSITION_COORD_WIDTH
+                local healthEnd = yEnd + C.POSITION_VITAL_PERCENT_WIDTH
+                local index = Util.FromBase36(record:sub(1, indexEnd))
+                local x = Util.FromBase36(record:sub(indexEnd + 1, xEnd))
+                local y = Util.FromBase36(record:sub(xEnd + 1, yEnd))
+                local health = Util.FromBase36(record:sub(yEnd + 1, healthEnd))
+                local resource = Util.FromBase36(record:sub(healthEnd + 1))
+                if index == nil or index >= #payload.guids or seen[index]
+                    or x == nil or x > C.POSITION_COORD_SCALE
+                    or y == nil or y > C.POSITION_COORD_SCALE
+                    or health == nil
+                    or (health > C.POSITION_VITAL_PERCENT_SCALE
+                        and health ~= C.POSITION_VITAL_PERCENT_UNKNOWN)
+                    or resource == nil
+                    or (resource > C.POSITION_VITAL_PERCENT_SCALE
+                        and resource ~= C.POSITION_VITAL_PERCENT_UNKNOWN)
+                then
+                    return false, "tick chunk contains malformed data"
+                end
+                seen[index] = true
+            end
+
+            chunkTicks = chunkTicks + 1
+            totalTicks = totalTicks + 1
+            totalPositions = totalPositions + recordCount
+            if chunkTicks > C.POSITION_BLOCK_TICKS then
+                return false, "tick chunk exceeds its tick limit"
+            end
+            offset = terminator + 1
+        end
+        lastChunkTicks = chunkTicks
+    end
+
+    payload.tick_count = totalTicks
+    payload.position_count = totalPositions
+    payload.current_chunk_ticks = lastChunkTicks
+    return true
+end
+
+local function rebuildVitalState()
+    vitalStateByGuid = {}
+    local totalRecords = 0
+    local lastChunkRecords = 0
+    local stateWidth = C.POSITION_GUID_INDEX_WIDTH
+        + C.POSITION_VITAL_MAX_WIDTH * 2
+        + C.POSITION_POWER_TYPE_WIDTH
+
+    for chunkIndex = 1, #payload.state_chunks do
+        local chunk = payload.state_chunks[chunkIndex]
+        if chunk == "" or chunk:sub(-1) ~= ";" then
+            return false, "vital state chunk contains malformed data"
+        end
+
+        local chunkRecords = 0
+        local offset = 1
+        while offset <= #chunk do
+            local terminator = chunk:find(";", offset, true)
+            if not terminator then
+                return false, "vital state chunk contains malformed data"
+            end
+            local record = chunk:sub(offset, terminator - 1)
+            local separator = record:find(":", 1, true)
+            if not separator or separator == 1
+                or #record - separator ~= stateWidth
+                or record:find(":", separator + 1, true)
+                or not Util.FromBase36(record:sub(1, separator - 1))
+            then
+                return false, "vital state chunk contains malformed data"
+            end
+
+            local body = record:sub(separator + 1)
+            local indexText = body:sub(1, C.POSITION_GUID_INDEX_WIDTH)
+            local stateText = body:sub(C.POSITION_GUID_INDEX_WIDTH + 1)
+            local index = Util.FromBase36(indexText)
+            if index == nil or index >= #payload.guids
+                or not Util.FromBase36(stateText)
+            then
+                return false, "vital state chunk contains malformed data"
+            end
+
+            vitalStateByGuid[payload.guids[index + 1]] = stateText
+            chunkRecords = chunkRecords + 1
+            totalRecords = totalRecords + 1
+            if chunkRecords > C.POSITION_STATE_BLOCK_RECORDS then
+                return false, "vital state chunk exceeds its record limit"
+            end
+            offset = terminator + 1
+        end
+        lastChunkRecords = chunkRecords
+    end
+
+    payload.state_count = totalRecords
+    payload.current_state_chunk_records = lastChunkRecords
+    return true
+end
+
+local function appendStateRecords(records)
+    for i = 1, #records do
+        if #payload.state_chunks == 0
+            or payload.current_state_chunk_records >= C.POSITION_STATE_BLOCK_RECORDS
+        then
+            payload.state_chunks[#payload.state_chunks + 1] = records[i]
+            payload.current_state_chunk_records = 1
+        else
+            local chunkIndex = #payload.state_chunks
+            payload.state_chunks[chunkIndex] = payload.state_chunks[chunkIndex] .. records[i]
+            payload.current_state_chunk_records = payload.current_state_chunk_records + 1
+        end
+    end
 end
 
 local function getBridgeDB()
@@ -159,12 +349,14 @@ function Store:Hydrate()
         return blockCapture("position_payload is not a table")
     elseif candidate.schema_version ~= C.POSITION_SCHEMA_VERSION then
         return blockCapture("unsupported schema version")
-    elseif candidate.encoding ~= "b36-v1" then
+    elseif candidate.encoding ~= "b36-v2" then
         return blockCapture("unsupported encoding")
     elseif type(candidate.guids) ~= "table" then
         return blockCapture("GUID dictionary is not a table")
     elseif type(candidate.chunks) ~= "table" then
         return blockCapture("chunk list is not a table")
+    elseif type(candidate.state_chunks) ~= "table" then
+        return blockCapture("vital state chunk list is not a table")
     end
 
     payload = candidate
@@ -187,11 +379,24 @@ function Store:Hydrate()
             return blockCapture("chunk list contains an invalid entry")
         end
     end
+    for i = 1, #payload.state_chunks do
+        if type(payload.state_chunks[i]) ~= "string" then
+            return blockCapture("vital state chunk list contains an invalid entry")
+        end
+    end
+
+    rebuildIndex()
+    local tickOK, tickReason = rebuildTickStats()
+    if not tickOK then return blockCapture(tickReason) end
+    local stateOK, stateReason = rebuildVitalState()
+    if not stateOK then return blockCapture(stateReason) end
 
     blockedReason = nil
     ensureNumber("current_chunk_ticks")
+    ensureNumber("current_state_chunk_records")
     ensureNumber("tick_count")
     ensureNumber("position_count")
+    ensureNumber("state_count")
     ensureNumber("encoded_bytes")
     ensureNumber("missing_positions")
     ensureNumber("skipped_positions")
@@ -201,7 +406,6 @@ function Store:Hydrate()
     ensureBoolean("warned_critical")
     ensureBoolean("warned_cap")
 
-    rebuildIndex()
     recalculateBytes()
     if payload.encoded_bytes >= C.POSITION_STORE_MAX_BYTES then
         payload.capped = true
@@ -232,16 +436,18 @@ function Store:Clear()
     db.position_payload = newPayload()
     payload = nil
     guidToIndex = {}
+    vitalStateByGuid = {}
     blockedReason = nil
     return self:Hydrate()
 end
 
---- Append one timestamped set of GUID positions.
--- Encoding: <epoch36>:<map36>:<guidIndex36><x36><y36>...;
+--- Append one timestamped set of positions and percentage vitals.
+-- Max health, max resource, and resource type are written to the separate state
+-- stream on first observation and whenever the encoded state changes.
 -- @tparam string timestampMs epoch milliseconds
 -- @tparam number mapId current map area ID, or zero when unavailable
--- @tparam table positions array of { guid=string, x=number, y=number }
--- @treturn boolean true when the tick was appended
+-- @tparam table positions unit samples with GUID, coordinates, and vital fields
+-- @treturn boolean true when the complete tick and its state changes were appended
 function Store:AppendTick(timestampMs, mapId, positions)
     if not payload and not self:Hydrate() then return false end
     if payload.capped then
@@ -253,11 +459,13 @@ function Store:AppendTick(timestampMs, mapId, positions)
 
     local timestamp = tonumber(timestampMs)
     if not timestamp then return false end
-
+    local timestampText = Util.ToBase36(timestamp)
     local encodedMap = fixedBase36(math.max(tonumber(mapId) or 0, 0), C.POSITION_MAP_WIDTH)
     if not encodedMap then encodedMap = string.rep("0", C.POSITION_MAP_WIDTH) end
 
     local records = {}
+    local stateRecords = {}
+    local stagedVitalState = {}
     local stagedGuids = {}
     local stagedIndices = {}
     local seen = {}
@@ -271,9 +479,7 @@ function Store:AppendTick(timestampMs, mapId, positions)
             local y = roundCoordinate(position.y)
             if x and y then
                 local index = guidToIndex[guid]
-                if index == nil then
-                    index = stagedIndices[guid]
-                end
+                if index == nil then index = stagedIndices[guid] end
                 if index == nil then
                     index = #payload.guids + #stagedGuids
                     if index < C.POSITION_GUID_MAX then
@@ -289,8 +495,19 @@ function Store:AppendTick(timestampMs, mapId, positions)
                     local indexText = fixedBase36(index, C.POSITION_GUID_INDEX_WIDTH)
                     local xText = fixedBase36(x, C.POSITION_COORD_WIDTH)
                     local yText = fixedBase36(y, C.POSITION_COORD_WIDTH)
-                    if indexText and xText and yText then
+                    local healthText = percentText(position.health_permille)
+                    local resourceText = percentText(position.resource_permille)
+                    local stateText = maxText(position.health_max)
+                        .. maxText(position.resource_max)
+                        .. powerTypeText(position.resource_type)
+                    if indexText and xText and yText and healthText and resourceText then
                         records[#records + 1] = indexText .. xText .. yText
+                            .. healthText .. resourceText
+                        if vitalStateByGuid[guid] ~= stateText then
+                            stateRecords[#stateRecords + 1] = timestampText .. ":"
+                                .. indexText .. stateText .. ";"
+                            stagedVitalState[guid] = stateText
+                        end
                     else
                         payload.skipped_positions = payload.skipped_positions + 1
                     end
@@ -301,13 +518,16 @@ function Store:AppendTick(timestampMs, mapId, positions)
 
     if #records == 0 then return false end
 
-    local tick = Util.ToBase36(timestamp) .. ":" .. encodedMap .. ":"
+    local tick = timestampText .. ":" .. encodedMap .. ":"
         .. table.concat(records) .. ";"
     local addedBytes = #tick
+    for i = 1, #stateRecords do addedBytes = addedBytes + #stateRecords[i] end
     for i = 1, #stagedGuids do
         addedBytes = addedBytes + #stagedGuids[i] + 1
     end
 
+    -- Commit the dictionary, tick, and state stream together only after the
+    -- complete append fits. The cap therefore never leaves a partial tick.
     if payload.encoded_bytes + addedBytes > C.POSITION_STORE_MAX_BYTES then
         payload.capped = true
         payload.skipped_ticks = payload.skipped_ticks + 1
@@ -332,8 +552,14 @@ function Store:AppendTick(timestampMs, mapId, positions)
         payload.current_chunk_ticks = payload.current_chunk_ticks + 1
     end
 
+    appendStateRecords(stateRecords)
+    for guid, stateText in pairs(stagedVitalState) do
+        vitalStateByGuid[guid] = stateText
+    end
+
     payload.tick_count = payload.tick_count + 1
     payload.position_count = payload.position_count + #records
+    payload.state_count = payload.state_count + #stateRecords
     payload.encoded_bytes = payload.encoded_bytes + addedBytes
     warnAtThresholds()
     if payload.encoded_bytes >= C.POSITION_STORE_MAX_BYTES then
@@ -381,8 +607,10 @@ function Store:GetStatus()
         max_bytes = C.POSITION_STORE_MAX_BYTES,
         tick_count = payload.tick_count,
         position_count = payload.position_count,
+        state_count = payload.state_count,
         guid_count = #payload.guids,
         chunk_count = #payload.chunks,
+        state_chunk_count = #payload.state_chunks,
         missing_positions = payload.missing_positions,
         skipped_positions = payload.skipped_positions,
         skipped_ticks = payload.skipped_ticks,

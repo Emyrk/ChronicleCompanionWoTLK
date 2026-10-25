@@ -1,12 +1,12 @@
-# Position Telemetry Upload Specification
+# Position and Vital Telemetry Upload Specification
 
-Status: normative for SavedVariables schema version 1 and encoding `b36-v1`.
+Status: normative for SavedVariables schema version 2 and encoding `b36-v2`.
 
 This document defines how the Chronicle desktop uploader and server consume the
-position stream written by ChronicleCompanionWoTLK. It does not define the HTTP
-endpoint or multipart request shape. Whatever upload envelope is used must pair
-one `WoWCombatLog.txt` with the position payload extracted from the same closed
-WoW installation.
+position and vital streams written by ChronicleCompanionWoTLK. It does not
+define the HTTP endpoint or multipart request shape. Whatever upload envelope is
+used must pair one `WoWCombatLog.txt` with the telemetry payload extracted from
+the same closed WoW installation.
 
 ## 1. Lifecycle and ownership
 
@@ -18,19 +18,20 @@ ChronicleSidekickBridgeWoTLKDB.position_payload
 ```
 
 The value is append-only across characters and WoW login sessions until a
-successful desktop upload resets it, or the user confirms **Clear positions**
-in settings or via `/clog positions clear`. There are no upload batches, per-session
-acknowledgments, or persisted Chronicle session IDs.
+successful desktop upload resets it, or the user confirms **Clear positions** in
+settings or via `/clog positions clear`. There are no upload batches,
+per-session acknowledgments, or persisted Chronicle session IDs.
 
 The desktop application must:
 
 1. Wait until WoW has exited and the SavedVariables file is stable.
-2. Read `WoWCombatLog.txt` and `ChronicleSidekickBridgeWoTLKDB.position_payload`.
+2. Read `WoWCombatLog.txt` and
+   `ChronicleSidekickBridgeWoTLKDB.position_payload`.
 3. Upload both as one logical Chronicle upload.
 4. Wait for a successful server response.
 5. Atomically rewrite the SavedVariables file, removing only
-   `ChronicleSidekickBridgeWoTLKDB.position_payload` and preserving every unrelated
-   key.
+   `ChronicleSidekickBridgeWoTLKDB.position_payload` and preserving every
+   unrelated key.
 6. Delete the uploaded combat log only after the SavedVariables replacement
    succeeds.
 
@@ -51,20 +52,25 @@ WTF/Account/<account>/SavedVariables/ChronicleSidekickBridgeWoTLK.lua
 The exact multipart field names and authentication scheme remain outside this
 specification.
 
+Schema version 2 is not an in-place reinterpretation of version 1. An existing
+`b36-v1` payload is preserved and blocks new capture until compatible tooling
+uploads or explicitly clears it.
+
 ## 2. Capture semantics
 
 Position capture must be enabled in settings and compatible bridge storage must
-be loaded. The addon attempts one tick per second only while both conditions are true:
+be loaded. The addon attempts one tick per second only while both conditions are
+true:
 
 ```lua
 LoggingCombat()
 and UnitAffectingCombat("player")
 ```
 
-One tick has one observation timestamp and contains the available positions for
-the visible connected raid or party roster.
+One tick has one observation timestamp and contains the available position and
+percentage-vital samples for the visible connected raid or party roster.
 
-Logical position fields are:
+Logical tick fields are:
 
 ```text
 observed_at_ms
@@ -72,6 +78,8 @@ map_id
 guid
 x
 y
+health_permille
+resource_permille
 ```
 
 - `observed_at_ms` is an epoch-millisecond estimate formed from `time()` at addon
@@ -80,25 +88,33 @@ y
 - `map_id` is the WotLK map area ID. Zero means unknown.
 - `guid` is the full opaque WoW unit GUID string.
 - `x` and `y` are normalized map coordinates in the inclusive range 0 through 1.
+- `health_permille` and `resource_permille` are rounded to 0 through 1,000.
+  Each step represents 0.1 percent. The reserved value 1,295 means unknown.
 
 Map ID is required because normalized coordinates are meaningful only within the
 map coordinate space where they were observed.
 
 A unit is omitted from a tick when its GUID or map coordinates are unavailable.
 The addon treats `0,0` returned by `GetPlayerMapPosition` as unavailable rather
-than as a valid position.
+than as a valid position. Missing vital APIs or a non-positive maximum do not
+omit an otherwise valid position; the affected percentage is encoded as unknown.
 
 If the player's position is unavailable while the world map is visible, the
 addon skips the entire tick rather than risk recording coordinates from a map
 the user is browsing. When the map is hidden, the addon may temporarily select
 the current zone, collect the tick, and restore the previous map state.
 
+Max health, max resource, and resource type are stored in a separate state
+stream. A state record is emitted on the first encoded observation of a GUID and
+again only when that three-field tuple changes. Unknown values are represented
+explicitly, so a transition between known and unknown state is also a change.
+
 ## 3. SavedVariables object
 
 ```lua
 position_payload = {
-    schema_version = 1,
-    encoding = "b36-v1",
+    schema_version = 2,
+    encoding = "b36-v2",
     guids = {
         "0x0000000000000001",
         "0x0000000000000002",
@@ -107,10 +123,15 @@ position_payload = {
         "<encoded ticks>",
         "<encoded ticks>",
     },
+    state_chunks = {
+        "<encoded max/type state records>",
+    },
     current_chunk_ticks = 60,
+    current_state_chunk_records = 12,
     tick_count = 120,
     position_count = 6000,
-    encoded_bytes = 49700,
+    state_count = 62,
+    encoded_bytes = 74500,
     missing_positions = 0,
     skipped_positions = 0,
     skipped_ticks = 0,
@@ -125,10 +146,11 @@ position_payload = {
 
 | Field | Type | Meaning |
 |---|---|---|
-| `schema_version` | integer | Must equal `1`. |
-| `encoding` | string | Must equal `b36-v1`. |
+| `schema_version` | integer | Must equal `2`. |
+| `encoding` | string | Must equal `b36-v2`. |
 | `guids` | array of strings | Zero-based GUID dictionary; Lua array element 1 is wire index 0. |
 | `chunks` | array of strings | Ordered encoded tick blocks. |
+| `state_chunks` | array of strings | Ordered max-health, max-resource, and resource-type state blocks. |
 
 ### Diagnostic fields
 
@@ -137,21 +159,25 @@ not trust them over decoded content.
 
 | Field | Meaning |
 |---|---|
-| `current_chunk_ticks` | Number of ticks in the final chunk. |
+| `current_chunk_ticks` | Number of ticks in the final tick chunk. |
+| `current_state_chunk_records` | Number of records in the final state chunk. |
 | `tick_count` | Addon-reported total ticks. |
-| `position_count` | Addon-reported total unit positions. |
-| `encoded_bytes` | `sum(byte_length(guid) + 1) + sum(byte_length(chunk))`, excluding Lua syntax. |
+| `position_count` | Addon-reported total unit samples. |
+| `state_count` | Addon-reported total state-change records. |
+| `encoded_bytes` | GUID bytes plus tick-chunk bytes plus state-chunk bytes, excluding Lua syntax. |
 | `missing_positions` | Unit observations omitted because a position was unavailable. |
 | `skipped_positions` | Unit observations omitted because they could not be encoded. |
 | `skipped_ticks` | Whole ticks refused after the storage cap. |
 | `capped` | Capture stopped because the storage cap was reached. |
 | `warned_*` | Whether the client displayed the corresponding capacity warning. |
 
-`chunks` are not upload batches. They are allocation blocks containing at most
-60 complete ticks each. The server processes all chunks in array order as one
-continuous stream. A tick never crosses a chunk boundary.
+`chunks` and `state_chunks` are not upload batches. They are allocation blocks
+that avoid repeated large Lua string copies. Tick chunks contain at most 60
+complete ticks. State chunks contain at most 60 complete state records. The
+server processes each array in array order as one continuous stream, and no
+record crosses a chunk boundary.
 
-## 4. Base36 alphabet
+## 4. Base36 alphabet and sentinels
 
 All encoded numbers use lowercase ASCII base36:
 
@@ -167,32 +193,48 @@ next digit value. Epoch milliseconds fit safely in a signed 64-bit integer and
 in the exact integer range of an IEEE-754 double for the foreseeable lifetime
 of this schema.
 
-## 5. Tick grammar
+Reserved unknown values are:
 
-A chunk is one or more complete ticks concatenated together:
+| Logical field | Encoded | Decoded |
+|---|---|---:|
+| health/resource permille | `zz` | 1,295 |
+| max health/resource | `zzzzz` | 60,466,175 |
+| resource type | `z` | 35 |
+
+Values between 1,001 and 1,294 are invalid in percentage fields. The five-digit
+maximum fields accept 0 through 60,466,174 as known values. Resource type accepts
+0 through 34 as known values. The resource type is the numeric first return value
+from WotLK `UnitPowerType`; consumers should preserve it even if they do not
+recognize a particular value.
+
+## 5. Tick stream grammar
+
+A tick chunk is one or more complete ticks concatenated together:
 
 ```text
-chunk       = tick *tick
-tick        = epoch ":" map-id ":" 1*50(position) ";"
-epoch       = 1*base36
-map-id      = 3base36
-position    = guid-index x-fixed y-fixed
-guid-index  = 2base36
-x-fixed     = 3base36
-y-fixed     = 3base36
-base36      = DIGIT / %x61-7A
+chunk             = tick *tick
+tick              = epoch ":" map-id ":" 1*50(unit-sample) ";"
+epoch             = 1*base36
+map-id            = 3base36
+unit-sample       = guid-index x-fixed y-fixed health-pct resource-pct
+guid-index        = 2base36
+x-fixed           = 3base36
+y-fixed           = 3base36
+health-pct        = 2base36
+resource-pct      = 2base36
+base36            = DIGIT / %x61-7A
 ```
 
 In practical parser terms:
 
 ```text
-<epochMs>:<mapId3>:<position8><position8>...;
+<epochMs>:<mapId3>:<unit12><unit12>...;
 ```
 
-Each position is exactly eight characters:
+Each unit sample is exactly 12 characters:
 
 ```text
-<guidIndex2><x3><y3>
+<guidIndex2><x3><y3><healthPermille2><resourcePermille2>
 ```
 
 Field widths and decoded ranges:
@@ -202,17 +244,54 @@ Field widths and decoded ranges:
 | `epochMs` | variable | Positive epoch milliseconds |
 | `mapId3` | 3 | 0 through 46,655; zero is unknown |
 | `guidIndex2` | 2 | 0 through 1,295 |
-| `x3` | 3 | Must be 0 through 10,000 |
-| `y3` | 3 | Must be 0 through 10,000 |
+| `x3` | 3 | 0 through 10,000 |
+| `y3` | 3 | 0 through 10,000 |
+| `healthPermille2` | 2 | 0 through 1,000, or 1,295 for unknown |
+| `resourcePermille2` | 2 | 0 through 1,000, or 1,295 for unknown |
 
-Recover normalized coordinates with:
+Recover normalized coordinates and percentages with:
 
 ```text
 x = x_fixed / 10000.0
 y = y_fixed / 10000.0
+health_percent = health_permille / 10.0
+resource_percent = resource_permille / 10.0
 ```
 
-## 6. Canonical test vector
+Do not apply those percentage formulas to the unknown sentinel.
+
+## 6. Vital state stream grammar
+
+A state chunk is one or more complete state records concatenated together:
+
+```text
+state-chunk       = state-record *state-record
+state-record      = epoch ":" guid-index health-max resource-max resource-type ";"
+health-max        = 5base36
+resource-max      = 5base36
+resource-type     = 1base36
+```
+
+In practical parser terms:
+
+```text
+<effectiveEpochMs>:<guidIndex2><healthMax5><resourceMax5><resourceType1>;
+```
+
+The fixed-width body after the colon is exactly 13 characters. The timestamp is
+the observation time of the tick that caused the state to be emitted.
+
+Process state records in encoded stream order. For each GUID, a record replaces
+that GUID's previous max/type tuple. Apply records whose timestamp matches a tick
+before interpreting that tick's percentages. Between changes, retain the most
+recent tuple in stream order. Do not sort either stream solely by timestamp;
+wall-clock anchors can move backward between WoW sessions.
+
+The percentage fields are authoritative as percentages. A known maximum permits
+an approximate absolute value, but the original current value cannot always be
+reconstructed exactly because the percentage was rounded to permille precision.
+
+## 7. Canonical test vector
 
 Input dictionary:
 
@@ -228,30 +307,46 @@ Logical tick:
 ```text
 observed_at_ms = 1786244400123
 map_id         = 631
-position 0     = dictionary index 0, x=0.1234, y=0.5678
-position 1     = dictionary index 1, x=1.0000, y=0.0000
+unit 0         = index 0, x=0.1234, y=0.5678, health=500, resource=250
+unit 1         = index 1, x=1.0000, y=0.0000, health=1000, resource=unknown
 ```
 
-Base36 values:
+Logical initial state:
+
+```text
+index 0 = max health 30000, max resource 20000, resource type 0
+index 1 = max health 50000, max resource 0, resource type 1
+```
+
+Selected base36 values:
 
 ```text
 1786244400123 -> msl7so3f
 631           -> 0hj
-0             -> 00
 1234          -> 0ya
 5678          -> 4dq
-1             -> 01
-10000         -> 7ps
-0             -> 000
+500           -> dw
+250           -> 6y
+1000          -> rs
+unknown pct   -> zz
+30000         -> 00n5c
+20000         -> 00ffk
+50000         -> 012kw
 ```
 
 Encoded tick:
 
 ```text
-msl7so3f:0hj:000ya4dq017ps000;
+msl7so3f:0hj:000ya4dqdw6y017ps000rszz;
 ```
 
-Decoded positions:
+Encoded state chunk:
+
+```text
+msl7so3f:0000n5c00ffk0;msl7so3f:01012kw000001;
+```
+
+Decoded unit samples:
 
 ```json
 [
@@ -260,112 +355,133 @@ Decoded positions:
     "map_id": 631,
     "guid": "0x0000000000000001",
     "x": 0.1234,
-    "y": 0.5678
+    "y": 0.5678,
+    "health_permille": 500,
+    "resource_permille": 250,
+    "health_max": 30000,
+    "resource_max": 20000,
+    "resource_type": 0
   },
   {
     "observed_at_ms": 1786244400123,
     "map_id": 631,
     "guid": "0x0000000000000002",
     "x": 1.0,
-    "y": 0.0
+    "y": 0.0,
+    "health_permille": 1000,
+    "resource_permille": null,
+    "health_max": 50000,
+    "resource_max": 0,
+    "resource_type": 1
   }
 ]
 ```
 
-## 7. Decoder algorithm
+## 8. Decoder algorithm
 
 Process chunks incrementally. Do not concatenate the entire payload before
 parsing.
 
 ```text
-validate top-level schema and dictionary
-position_ordinal = 0
-tick_ordinal = 0
+validate top-level schema and GUID dictionary
 
-for each chunk in chunks, preserving array order:
+state_by_guid = empty map
+state_records_by_timestamp_and_guid = decode state_chunks in array order
+
+for each tick chunk in chunks, preserving array order:
     require chunk is a non-empty ASCII string
-    split/scan chunk on semicolon delimiters
-    require no unterminated trailing tick
+    scan complete semicolon-terminated ticks
     require 1 through 60 ticks in the chunk
 
-    for each tick text:
+    for each tick:
         split at the first and second colon
-        decode epoch text
-        require map text length is exactly 3
-        decode map ID
+        decode epoch and three-character map ID
+        require unit bytes are a non-zero multiple of 12
+        require 1 through 50 unit samples
 
-        records = text after the second colon
-        require records length is a non-zero multiple of 8
-        require records length / 8 <= 50
+        apply the next state records emitted for this tick timestamp in
+        state-stream order before producing enriched samples
 
         seen indexes = empty set
-        for each 8-character record:
-            decode chars 1-2 as GUID dictionary index
-            decode chars 3-5 as x_fixed
-            decode chars 6-8 as y_fixed
+        for each 12-character unit sample:
+            decode index, x, y, health permille, resource permille
+            require index exists and is unique within the tick
+            require x and y are at most 10000
+            require each permille is 0..1000 or the unknown sentinel
 
-            require index exists in guids
-            require index is not duplicated within this tick
-            require x_fixed <= 10000
-            require y_fixed <= 10000
-
-            emit {
-                tick_ordinal,
-                position_ordinal,
-                observed_at_ms,
-                map_id,
-                guid = guids[index + 1],
-                x_fixed,
-                y_fixed,
-            }
-            position_ordinal += 1
-
-        tick_ordinal += 1
+            emit the sample with the current state_by_guid tuple, if any
 ```
 
-Preserve encoded stream order. Do not sort ticks solely by timestamp. System
-clock changes between WoW sessions can produce a non-monotonic timestamp even
-though append order remains authoritative.
+Decode the state stream independently:
 
-## 8. Required validation limits
+```text
+for each state chunk in state_chunks, preserving array order:
+    require 1 through 60 complete semicolon-terminated records
+    for each record:
+        split at its only colon
+        require a non-empty epoch and a 13-character body
+        decode index, max health, max resource, and resource type
+        require the index exists
+        require each value is known-range or its exact unknown sentinel
+        retain stream ordinal for deterministic application
+```
+
+Preserve encoded stream order. A state record is valid even if no uploaded tick
+ultimately matches its timestamp; retain or report it as unmatched rather than
+assigning it to an unrelated tick.
+
+## 9. Required validation limits
 
 Validate before or during decoding:
 
 | Limit | Requirement |
 |---|---|
-| Schema | `schema_version == 1` |
-| Encoding | `encoding == "b36-v1"` |
+| Schema | `schema_version == 2` |
+| Encoding | `encoding == "b36-v2"` |
 | GUID count | 0 through 1,296 |
 | GUID uniqueness | Every dictionary string must be unique |
 | GUID representation | Non-empty ASCII string, maximum 64 bytes; treat as opaque |
-| Chunk type | Non-empty ASCII string |
-| Ticks per chunk | 1 through 60 |
-| Positions per tick | 1 through 50 |
+| Tick/state chunk type | Non-empty ASCII string |
+| Ticks per tick chunk | 1 through 60 |
+| Records per state chunk | 1 through 60 |
+| Unit samples per tick | 1 through 50 |
 | Coordinate values | 0 through 10,000 inclusive |
+| Percentage values | 0 through 1,000, or exactly 1,295 |
+| Maximum values | 0 through 60,466,174, or exactly 60,466,175 |
+| Resource type | 0 through 34, or exactly 35 |
 | Encoded content | At most 4,128,768 bytes |
 
 Recommended GUID matching is ASCII case-insensitive because combat-log GUID
 hexadecimal casing can vary. Do not parse GUIDs through a JavaScript number or
 other potentially lossy numeric type.
 
-The server should reject the position payload, while still allowing the combat
-log upload to report a useful error, when a normative field or encoded record is
-invalid. Never partially reinterpret malformed fixed-width records.
+The server should reject the telemetry attachment, while still allowing the
+combat log upload to report a useful error, when a normative field or encoded
+record is invalid. Never partially reinterpret malformed fixed-width records.
 
-## 9. Integrity and diagnostics
+## 10. Integrity and diagnostics
 
 After decoding, recompute:
 
 ```text
 decoded_tick_count
 decoded_position_count
+decoded_state_count
 encoded_content_bytes
 ```
 
-Compare those values with `tick_count`, `position_count`, and `encoded_bytes`.
-A mismatch indicates truncation, manual modification, or an implementation bug.
-The recommended behavior is to reject the position attachment and retain the
-combat log upload with an explicit position-telemetry error.
+`encoded_content_bytes` is:
+
+```text
+sum(byte_length(guid) + 1)
++ sum(byte_length(tick_chunk))
++ sum(byte_length(state_chunk))
+```
+
+Compare those values with `tick_count`, `position_count`, `state_count`, and
+`encoded_bytes`. A mismatch indicates truncation, manual modification, or an
+implementation bug. The recommended behavior is to reject the telemetry
+attachment and retain the combat log upload with an explicit telemetry error.
 
 The following fields indicate incomplete coverage but do not invalidate decoded
 records:
@@ -376,43 +492,47 @@ missing_positions > 0
 skipped_positions > 0
 skipped_ticks > 0
 map_id == 0
+unknown percentage or state sentinels
 ```
 
-Store or surface these diagnostics so reports do not imply complete position
-coverage when capture was incomplete.
+Store or surface these diagnostics so reports do not imply complete position or
+vital coverage when capture was incomplete.
 
-## 10. Upload idempotency
+## 11. Upload idempotency
 
 The desktop app may retry after the server committed an upload but before local
 files were deleted. The server must make the combined upload idempotent.
 
-A recommended deterministic position digest is SHA-256 over the following byte
+A recommended deterministic telemetry digest is SHA-256 over the following byte
 sequence, written in order:
 
-1. ASCII `position-b36-v1`, then byte `0x0A`.
+1. ASCII `position-b36-v2`, then byte `0x0A`.
 2. ASCII decimal GUID count, then byte `0x0A`.
 3. For each GUID in dictionary order: ASCII decimal byte length, ASCII `:`, the
    exact GUID bytes, then byte `0x0A`.
-4. ASCII decimal chunk count, then byte `0x0A`.
-5. For each chunk in array order: ASCII decimal byte length, ASCII `:`, the exact
-   chunk bytes, then byte `0x0A`.
+4. ASCII decimal tick-chunk count, then byte `0x0A`.
+5. For each tick chunk in array order: ASCII decimal byte length, ASCII `:`, the
+   exact chunk bytes, then byte `0x0A`.
+6. ASCII decimal state-chunk count, then byte `0x0A`.
+7. For each state chunk in array order: ASCII decimal byte length, ASCII `:`, the
+   exact chunk bytes, then byte `0x0A`.
 
-Lengths are byte counts, not Unicode code-point counts. Schema version 1 permits
+Lengths are byte counts, not Unicode code-point counts. Schema version 2 permits
 only ASCII GUIDs and chunks, so the values are identical in a conforming payload.
 
 A combined upload idempotency key may be:
 
 ```text
-SHA256(<combat-log-sha256-hex> ":" <position-digest-hex>)
+SHA256(<combat-log-sha256-hex> ":" <telemetry-digest-hex>)
 ```
 
 The exact database key is implementation-specific, but retries with identical
-combat-log bytes and position content must not create duplicate encounters or
-position rows.
+combat-log bytes and telemetry content must not create duplicate encounters,
+position rows, or vital rows.
 
-## 11. Encounter association
+## 12. Encounter association
 
-Position records are attached to the same logical upload as the combat log.
+Telemetry records are attached to the same logical upload as the combat log.
 Associate them by reconstructed combat-log time, map context, and GUID:
 
 1. Reconstruct absolute combat-log timestamps using the server's existing log
@@ -422,14 +542,16 @@ Associate them by reconstructed combat-log time, map context, and GUID:
    precision differences.
 3. Use `map_id` as a consistency check and partition key when available.
 4. Join `guid` to combatants using case-insensitive opaque-string comparison.
-5. Keep unmatched ticks as diagnostics or discard them explicitly; never assign
-   a tick to an encounter solely because it is adjacent in chunk order.
+5. Apply state changes to same-GUID samples before deriving any approximate
+   absolute vital values.
+6. Keep unmatched ticks and state changes as diagnostics or discard them
+   explicitly; never assign them solely because they are adjacent in a chunk.
 
-The position stream can span multiple characters, zones, instances, and login
-sessions because it persists until desktop upload. Timestamp and map context,
-not an addon session ID, define association.
+The streams can span multiple characters, zones, instances, and login sessions
+because they persist until desktop upload. Timestamp, map context, GUID, and
+encoded stream order, not an addon session ID, define association.
 
-## 12. Capacity semantics
+## 13. Capacity semantics
 
 The addon uses these thresholds:
 
@@ -441,31 +563,38 @@ file budget       = 4,194,304 bytes (4 MiB)
 reserved margin   = 65,536 bytes
 ```
 
-At the cap, the addon keeps the complete encoded prefix and stops appending new
+A tick, newly required GUIDs, and state records caused by that tick are committed
+atomically. If the complete append would exceed the cap, none of them are
+written. The addon keeps the complete encoded prefix and stops appending new
 ticks. It does not drop old data. `capped` and `skipped_ticks` communicate the
 resulting missing suffix.
 
-The measured 50-unit, one-hour fixture contains:
+The measured 50-unit, one-hour fixture with unchanged max/type state contains:
 
 ```text
 3,600 ticks
-180,000 positions
-1,491,350 encoded bytes
-approximately 1.42 MiB before Lua SavedVariables syntax
+180,000 unit samples
+50 initial state records
+approximately 2,212,500 encoded bytes
+approximately 2.11 MiB before Lua SavedVariables syntax
 ```
 
-## 13. Conformance checklist
+Additional state records are small and occur only when a unit's max health, max
+resource, or resource type changes.
+
+## 14. Conformance checklist
 
 A server implementation is conformant when it:
 
-- Accepts the canonical test vector.
+- Accepts both canonical encoded streams.
 - Resolves GUID indexes with Lua-array index offset `+1`.
-- Preserves chunk and tick order.
-- Rejects invalid base36, field widths, indexes, duplicate indexes, and
-  out-of-range coordinates.
-- Enforces the GUID, chunk, tick, position, and byte limits.
+- Preserves tick-stream and state-stream order.
+- Rejects invalid base36, field widths, indexes, duplicate tick indexes,
+  out-of-range values, and non-sentinel reserved ranges.
+- Enforces the GUID, chunk, tick, unit, state-record, and byte limits.
 - Treats GUIDs as opaque strings rather than numbers.
-- Verifies decoded counts and encoded byte totals.
-- Retains incomplete-coverage diagnostics.
-- Makes combined combat-log and position uploads idempotent.
+- Applies max/type changes without treating rounded percentages as exact values.
+- Verifies decoded counts and encoded byte totals across both streams.
+- Retains incomplete-coverage and unknown-value diagnostics.
+- Makes combined combat-log and telemetry uploads idempotent.
 - Does not require a Chronicle session ID.

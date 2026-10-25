@@ -11,13 +11,21 @@ local function loadStore(overrides)
         C = {
             POSITION_BRIDGE_ADDON = "ChronicleSidekickBridgeWoTLK",
             POSITION_BRIDGE_STORAGE_VERSION = 1,
-            POSITION_SCHEMA_VERSION = 1,
+            POSITION_SCHEMA_VERSION = 2,
             POSITION_UNIT_MAX = 50,
             POSITION_GUID_INDEX_WIDTH = 2,
             POSITION_COORD_SCALE = 10000,
             POSITION_COORD_WIDTH = 3,
             POSITION_MAP_WIDTH = 3,
             POSITION_BLOCK_TICKS = 60,
+            POSITION_VITAL_PERCENT_SCALE = 1000,
+            POSITION_VITAL_PERCENT_WIDTH = 2,
+            POSITION_VITAL_PERCENT_UNKNOWN = 1295,
+            POSITION_VITAL_MAX_WIDTH = 5,
+            POSITION_VITAL_MAX_UNKNOWN = 60466175,
+            POSITION_POWER_TYPE_WIDTH = 1,
+            POSITION_POWER_TYPE_UNKNOWN = 35,
+            POSITION_STATE_BLOCK_RECORDS = 60,
             POSITION_STORE_WARN_BYTES = overrides.warn or 1024,
             POSITION_STORE_CRITICAL_BYTES = overrides.critical or 1536,
             POSITION_STORE_MAX_BYTES = overrides.max or 2048,
@@ -49,16 +57,32 @@ local function loadStore(overrides)
     return Chronicle.PositionStore, db, warnings, account
 end
 
-local function pos(guid, x, y)
-    return { guid = guid, x = x, y = y }
+local function pos(guid, x, y, vitals)
+    vitals = vitals or {}
+    local healthPermille = vitals.health_permille
+    if healthPermille == nil and not vitals.unknown_health then healthPermille = 1000 end
+    local resourcePermille = vitals.resource_permille
+    if resourcePermille == nil and not vitals.unknown_resource then resourcePermille = 1000 end
+    return {
+        guid = guid,
+        x = x,
+        y = y,
+        health_permille = healthPermille,
+        resource_permille = resourcePermille,
+        health_max = vitals.health_max or 30000,
+        resource_max = vitals.resource_max or 20000,
+        resource_type = vitals.resource_type or 0,
+    }
 end
 
 add("hydrate creates one account-wide payload without replacing other settings", function()
     local store, db = loadStore()
     T.equal(db.unrelated, "keep")
-    T.equal(db.position_payload.schema_version, 1)
+    T.equal(db.position_payload.schema_version, 2)
+    T.equal(db.position_payload.encoding, "b36-v2")
     T.equal(#db.position_payload.guids, 0)
     T.equal(#db.position_payload.chunks, 0)
+    T.equal(#db.position_payload.state_chunks, 0)
     T.equal(store:GetStatus().tick_count, 0)
 end)
 
@@ -75,14 +99,116 @@ add("append groups one epoch and map with dictionary-indexed positions", functio
     local expected = util.ToBase36(1786244400123)
         .. ":" .. util.ToBase36(631, 3) .. ":"
         .. "00" .. util.ToBase36(1234, 3) .. util.ToBase36(5678, 3)
+        .. util.ToBase36(1000, 2) .. util.ToBase36(1000, 2)
         .. "01" .. util.ToBase36(10000, 3) .. util.ToBase36(0, 3)
+        .. util.ToBase36(1000, 2) .. util.ToBase36(1000, 2)
         .. ";"
 
     T.equal(payload.chunks[1], expected)
+    T.equal(payload.state_count, 2)
+    T.equal(#payload.state_chunks, 1)
     T.equal(payload.guids[1], "0x0000000000000001")
     T.equal(payload.guids[2], "0x0000000000000002")
     T.equal(payload.tick_count, 1)
     T.equal(payload.position_count, 2)
+end)
+
+add("b36-v2 canonical tick and state vector matches the server contract", function()
+    local store, db = loadStore()
+    T.truthy(store:AppendTick("1786244400123", 631, {
+        pos("0x0000000000000001", 0.1234, 0.5678, {
+            health_permille = 500,
+            resource_permille = 250,
+            health_max = 30000,
+            resource_max = 20000,
+            resource_type = 0,
+        }),
+        pos("0x0000000000000002", 1, 0, {
+            health_permille = 1000,
+            unknown_resource = true,
+            health_max = 50000,
+            resource_max = 0,
+            resource_type = 1,
+        }),
+    }))
+    T.equal(db.position_payload.chunks[1],
+        "msl7so3f:0hj:000ya4dqdw6y017ps000rszz;")
+    T.equal(db.position_payload.state_chunks[1],
+        "msl7so3f:0000n5c00ffk0;msl7so3f:01012kw000001;")
+end)
+
+add("max health resource and type emit only on first observation or change", function()
+    local store, db = loadStore()
+    local first = pos("0x1", 0.25, 0.75, {
+        health_permille = 500,
+        resource_permille = 250,
+        health_max = 30000,
+        resource_max = 20000,
+        resource_type = 0,
+    })
+    T.truthy(store:AppendTick("1786244400000", 631, { first }))
+    T.equal(db.position_payload.state_count, 1)
+
+    local util = Chronicle.Util
+    local expectedState = util.ToBase36(1786244400000) .. ":00"
+        .. util.ToBase36(30000, 5)
+        .. util.ToBase36(20000, 5)
+        .. util.ToBase36(0, 1) .. ";"
+    T.equal(db.position_payload.state_chunks[1], expectedState)
+
+    T.truthy(store:AppendTick("1786244401000", 631, { first }))
+    T.equal(db.position_payload.state_count, 1)
+
+    local changed = pos("0x1", 0.25, 0.75, {
+        health_permille = 500,
+        resource_permille = 750,
+        health_max = 30000,
+        resource_max = 100,
+        resource_type = 3,
+    })
+    T.truthy(store:AppendTick("1786244402000", 631, { changed }))
+    T.equal(db.position_payload.state_count, 2)
+    T.contains(db.position_payload.state_chunks[1],
+        util.ToBase36(1786244402000) .. ":00"
+            .. util.ToBase36(30000, 5)
+            .. util.ToBase36(100, 5)
+            .. util.ToBase36(3, 1) .. ";")
+end)
+
+add("hydration rebuilds max and resource state without duplicate records", function()
+    local store, db = loadStore()
+    local position = pos("0x1", 0.25, 0.75)
+    T.truthy(store:AppendTick("1786244400000", 631, { position }))
+    T.equal(db.position_payload.state_count, 1)
+
+    local reloaded = loadStore({ db = db })
+    T.truthy(reloaded:AppendTick("1786244401000", 631, { position }))
+    T.equal(db.position_payload.state_count, 1)
+end)
+
+add("unknown max values and resource type use reserved state sentinels", function()
+    local store, db = loadStore()
+    T.truthy(store:AppendTick("1786244400000", 631, {
+        pos("0x1", 0.25, 0.75, {
+            health_max = -1,
+            resource_max = 60466175,
+            resource_type = 35,
+        }),
+    }))
+    local util = Chronicle.Util
+    local unknownMax = util.ToBase36(60466175, 5)
+    local unknownType = util.ToBase36(35, 1)
+    T.contains(db.position_payload.state_chunks[1],
+        "00" .. unknownMax .. unknownMax .. unknownType .. ";")
+end)
+
+add("unknown percentages use the reserved two-character sentinel", function()
+    local store, db = loadStore()
+    T.truthy(store:AppendTick("1786244400000", 631, {
+        pos("0x1", 0.25, 0.75, { unknown_health = true, unknown_resource = true }),
+    }))
+    local unknown = Chronicle.Util.ToBase36(1295, 2)
+    T.contains(db.position_payload.chunks[1], unknown .. unknown .. ";")
 end)
 
 add("existing GUIDs are reused across ticks and blocks", function()
@@ -94,6 +220,21 @@ add("existing GUIDs are reused across ticks and blocks", function()
     T.equal(#db.position_payload.guids, 1)
     T.equal(#db.position_payload.chunks, 2)
     T.equal(db.position_payload.tick_count, 61)
+end)
+
+add("vital state records split into bounded allocation blocks", function()
+    local store, db = loadStore({ warn = 9000, critical = 9500, max = 10000 })
+    local first = {}
+    local second = {}
+    for i = 1, 61 do
+        local target = i <= 50 and first or second
+        target[#target + 1] = pos(string.format("0x%016x", i), 0.25, 0.75)
+    end
+    T.truthy(store:AppendTick("1786244400000", 631, first))
+    T.truthy(store:AppendTick("1786244401000", 631, second))
+    T.equal(db.position_payload.state_count, 61)
+    T.equal(#db.position_payload.state_chunks, 2)
+    T.equal(db.position_payload.current_state_chunk_records, 1)
 end)
 
 add("an append that exactly fills the cap marks the payload capped", function()
@@ -113,7 +254,7 @@ add("an append that exactly fills the cap marks the payload capped", function()
 end)
 
 add("warnings fire once and the hard cap preserves existing data", function()
-    local store, db, warnings = loadStore({ warn = 40, critical = 70, max = 105 })
+    local store, db, warnings = loadStore({ warn = 40, critical = 100, max = 130 })
     local position = pos("0x0000000000000001", 0.25, 0.75)
 
     T.truthy(store:AppendTick("1786244400000", 631, { position }))
@@ -127,7 +268,7 @@ add("warnings fire once and the hard cap preserves existing data", function()
     T.equal(#warnings, 3)
 end)
 
-add("fifty units at one hertz stay near 1.5 MB per hour", function()
+add("fifty units with percentage vitals stay near 2.2 MB per hour", function()
     local store = loadStore({
         warn = 7 * 1024 * 1024,
         critical = 7.5 * 1024 * 1024,
@@ -141,8 +282,8 @@ add("fifty units at one hertz stay near 1.5 MB per hour", function()
         T.truthy(store:AppendTick(tostring(1786244400000 + second * 1000), 631, positions))
     end
     local bytes = store:GetStatus().encoded_bytes
-    T.truthy(bytes > 1490000, "expected at least 1.49 MB")
-    T.truthy(bytes < 1510000, "expected less than 1.51 MB")
+    T.truthy(bytes > 2210000, "expected at least 2.21 MB")
+    T.truthy(bytes < 2230000, "expected less than 2.23 MB")
 end)
 
 add("invalid or future payloads are preserved and block capture", function()
@@ -163,10 +304,11 @@ end)
 
 add("malformed chunk data is preserved and blocks capture", function()
     local malformed = {
-        schema_version = 1,
-        encoding = "b36-v1",
+        schema_version = 2,
+        encoding = "b36-v2",
         guids = {},
         chunks = { 42 },
+        state_chunks = {},
     }
     local store, db = loadStore({ db = { position_payload = malformed } })
     T.equal(db.position_payload, malformed)
@@ -176,12 +318,81 @@ add("malformed chunk data is preserved and blocks capture", function()
     }))
 end)
 
+add("malformed string tick data is preserved and blocks capture", function()
+    local malformed = {
+        schema_version = 2,
+        encoding = "b36-v2",
+        guids = { "0x1" },
+        chunks = { "msl7so3f:0hj:000ya4dqdw6y" },
+        state_chunks = {},
+    }
+    local store, db = loadStore({ db = { position_payload = malformed } })
+    T.equal(db.position_payload, malformed)
+    T.equal(store:GetStatus().blocked_reason, "tick chunk contains malformed data")
+end)
+
+add("out-of-range percentage samples block hydration", function()
+    local malformed = {
+        schema_version = 2,
+        encoding = "b36-v2",
+        guids = { "0x1" },
+        chunks = { "msl7so3f:0hj:000ya4dqrt6y;" },
+        state_chunks = {},
+    }
+    local store = loadStore({ db = { position_payload = malformed } })
+    T.equal(store:GetStatus().blocked_reason, "tick chunk contains malformed data")
+end)
+
+add("hydration rebuilds tick diagnostics from validated chunks", function()
+    local store, db = loadStore()
+    T.truthy(store:AppendTick("1786244400000", 631, { pos("0x1", 0.25, 0.75) }))
+    db.position_payload.tick_count = 99
+    db.position_payload.position_count = 99
+    db.position_payload.current_chunk_ticks = 99
+
+    local reloaded = loadStore({ db = db })
+    local status = reloaded:GetStatus()
+    T.equal(status.tick_count, 1)
+    T.equal(status.position_count, 1)
+    T.equal(db.position_payload.current_chunk_ticks, 1)
+end)
+
+add("malformed vital state data is preserved and blocks capture", function()
+    local malformed = {
+        schema_version = 2,
+        encoding = "b36-v2",
+        guids = {},
+        chunks = {},
+        state_chunks = { 42 },
+    }
+    local store, db = loadStore({ db = { position_payload = malformed } })
+    T.equal(db.position_payload, malformed)
+    T.truthy(store:IsCapped())
+    T.equal(store:GetStatus().blocked_reason, "vital state chunk list contains an invalid entry")
+end)
+
+add("malformed vital state strings block without hydrating diagnostics", function()
+    local malformed = {
+        schema_version = 2,
+        encoding = "b36-v2",
+        guids = { "0x1" },
+        chunks = {},
+        state_chunks = { "not-a-complete-record" },
+    }
+    local store, db = loadStore({ db = { position_payload = malformed } })
+    T.equal(db.position_payload, malformed)
+    T.equal(malformed.state_count, nil)
+    T.equal(malformed.current_state_chunk_records, nil)
+    T.equal(store:GetStatus().blocked_reason, "vital state chunk contains malformed data")
+end)
+
 add("duplicate GUID dictionary entries block capture without mutation", function()
     local duplicate = {
-        schema_version = 1,
-        encoding = "b36-v1",
+        schema_version = 2,
+        encoding = "b36-v2",
         guids = { "0x1", "0x1" },
         chunks = {},
+        state_chunks = {},
     }
     local store, db = loadStore({ db = { position_payload = duplicate } })
     T.equal(db.position_payload, duplicate)
@@ -192,10 +403,11 @@ add("oversized GUID dictionary blocks capture without mutation", function()
     local guids = {}
     for i = 1, 1297 do guids[i] = tostring(i) end
     local oversized = {
-        schema_version = 1,
-        encoding = "b36-v1",
+        schema_version = 2,
+        encoding = "b36-v2",
         guids = guids,
         chunks = {},
+        state_chunks = {},
     }
     local store, db = loadStore({ db = { position_payload = oversized } })
     T.equal(db.position_payload, oversized)
@@ -283,6 +495,8 @@ add("explicit clear resets counters, GUIDs and blocks while preserving unrelated
     T.equal(status.tick_count, 0)
     T.equal(status.guid_count, 0)
     T.equal(status.chunk_count, 0)
+    T.equal(status.state_count, 0)
+    T.equal(status.state_chunk_count, 0)
     T.equal(status.encoded_bytes, 0)
     T.equal(status.missing_positions, 0)
     T.falsy(status.capped)

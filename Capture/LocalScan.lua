@@ -588,9 +588,11 @@ local function slashHandler(msg)
         end
         Log:Info("  Data: %.2f MiB / %.2f MiB (%d%%)",
             status.encoded_bytes / 1048576, status.max_bytes / 1048576, percent)
-        Log:Info("  Ticks: %d  |  Positions: %d  |  GUIDs: %d  |  Blocks: %d",
-            status.tick_count or 0, status.position_count or 0,
-            status.guid_count or 0, status.chunk_count or 0)
+        Log:Info("  Ticks: %d  |  Unit samples: %d  |  GUIDs: %d",
+            status.tick_count or 0, status.position_count or 0, status.guid_count or 0)
+        Log:Info("  State changes: %d  |  Tick blocks: %d  |  State blocks: %d",
+            status.state_count or 0, status.chunk_count or 0,
+            status.state_chunk_count or 0)
         Log:Info("  Missing: %d  |  Skipped positions: %d  |  Skipped ticks: %d",
             status.missing_positions or 0, status.skipped_positions or 0,
             status.skipped_ticks or 0)

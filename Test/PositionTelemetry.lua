@@ -13,6 +13,10 @@ local function loadTelemetry(options)
     local mapSetCalls = 0
     local handlers = {}
     local warnings = {}
+    local vitals = options.vitals or {
+        player = { health = 15000, health_max = 30000, resource = 10000, resource_max = 20000, resource_type = 0 },
+        party1 = { health = 30000, health_max = 30000, resource = 50, resource_max = 100, resource_type = 1 },
+    }
     local positions = options.positions or {
         player = { 0.25, 0.75 },
         party1 = { 0.50, 0.60 },
@@ -23,6 +27,7 @@ local function loadTelemetry(options)
             POSITION_SAMPLE_INTERVAL_SEC = 1,
             POSITION_UNIT_MAX = 50,
             POSITION_MISSING_WARN_SAMPLES = 10,
+            POSITION_VITAL_PERCENT_SCALE = 1000,
             PARTY_MEMBER_MAX = 4,
             RAID_MEMBER_MAX = 40,
         },
@@ -67,6 +72,13 @@ local function loadTelemetry(options)
         local index = tonumber(unit:match("(%d+)$")) or 2
         return string.format("0x%016x", index + 1)
     end
+    _G.UnitHealth = function(unit) return vitals[unit] and vitals[unit].health end
+    _G.UnitHealthMax = function(unit) return vitals[unit] and vitals[unit].health_max end
+    _G.UnitPowerType = function(unit) return vitals[unit] and vitals[unit].resource_type end
+    _G.UnitPower = function(unit) return vitals[unit] and vitals[unit].resource end
+    _G.UnitPowerMax = function(unit) return vitals[unit] and vitals[unit].resource_max end
+    _G.UnitMana = function(unit) return vitals[unit] and vitals[unit].resource end
+    _G.UnitManaMax = function(unit) return vitals[unit] and vitals[unit].resource_max end
     _G.GetCurrentMapAreaID = function() return 631 end
     _G.GetPlayerMapPosition = function(unit)
         local value = positions[unit]
@@ -106,7 +118,47 @@ add("capture stores one epoch for all visible group positions", function()
     T.equal(appended[1].mapId, 631)
     T.equal(#appended[1].samples, 2)
     T.equal(appended[1].samples[1].guid, "0x0000000000000001")
+    T.equal(appended[1].samples[1].health_permille, 500)
+    T.equal(appended[1].samples[1].resource_permille, 500)
+    T.equal(appended[1].samples[1].health_max, 30000)
+    T.equal(appended[1].samples[1].resource_max, 20000)
+    T.equal(appended[1].samples[1].resource_type, 0)
+    T.equal(appended[1].samples[2].health_permille, 1000)
+    T.equal(appended[1].samples[2].resource_permille, 500)
+    T.equal(appended[1].samples[2].resource_type, 1)
     T.equal(appended[1].samples[2].guid, "0x0000000000000002")
+end)
+
+add("vital percentages use permille rounding and preserve zero maximums", function()
+    local telemetry, appended = loadTelemetry({
+        partyCount = 0,
+        positions = { player = { 0.25, 0.75 } },
+        vitals = {
+            player = {
+                health = 15015,
+                health_max = 30000,
+                resource = 0,
+                resource_max = 0,
+                resource_type = 1,
+            },
+        },
+    })
+    T.truthy(telemetry:CaptureOnce())
+    local sample = appended[1].samples[1]
+    T.equal(sample.health_permille, 501)
+    T.equal(sample.resource_permille, nil)
+    T.equal(sample.health_max, 30000)
+    T.equal(sample.resource_max, 0)
+    T.equal(sample.resource_type, 1)
+end)
+
+add("legacy UnitMana APIs provide resource values when UnitPower is unavailable", function()
+    local telemetry, appended = loadTelemetry({ partyCount = 0 })
+    _G.UnitPower = nil
+    _G.UnitPowerMax = nil
+    T.truthy(telemetry:CaptureOnce())
+    T.equal(appended[1].samples[1].resource_permille, 500)
+    T.equal(appended[1].samples[1].resource_max, 20000)
 end)
 
 add("missing map coordinates are counted and omitted", function()

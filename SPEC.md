@@ -503,33 +503,39 @@ The addon recreates an empty payload on the next login.
 
 Capture runs once per second only while both `LoggingCombat()` and
 `UnitAffectingCombat("player")` are true. Each tick contains one epoch timestamp,
-one map ID, and the available GUID/x/y positions for the visible party or raid.
-The map ID is required because normalized x/y coordinates are only meaningful in
-the map coordinate space where they were observed.
+one map ID, and the available GUID/x/y, health-permille, and resource-permille
+samples for the visible party or raid. The map ID is required because normalized
+x/y coordinates are only meaningful in the map coordinate space where they were
+observed. Max health, max resource, and numeric resource type are written to a
+separate state stream on first observation and whenever the tuple changes.
 
 Coordinates come from the stock 3.3.5 `GetPlayerMapPosition` API, not world-space
 unit positions. A `(0, 0)` result means unavailable and is never saved. Some
 instances do not expose usable map positions even after selecting the current
 zone; being nearby or visible does not guarantee coordinates. If every unit is
-unavailable, the sampler continues retrying but appends no tick. `/clog positions`
-shows the last sampled map/floor, raw player coordinates, and available/missing
-unit counts to distinguish this case from a storage failure. Close the world map
-to permit current-zone selection; test outdoors to check whether the limitation
-is specific to an instance. SavedVariables are flushed to disk by WoW at logout
-or UI reload, not every sampling tick.
+unavailable, the sampler continues retrying but appends no tick. Missing vital
+values use reserved unknown sentinels without dropping a valid position.
+`/clog positions` shows the last sampled map/floor, raw player coordinates, and
+available/missing unit counts to distinguish this case from a storage failure.
+Close the world map to permit current-zone selection; test outdoors to check
+whether the limitation is specific to an instance. SavedVariables are flushed
+to disk by WoW at logout or UI reload, not every sampling tick.
 
 ### Table shape
 
 ```lua
 position_payload = {
-    schema_version = 1,
-    encoding = "b36-v1",
+    schema_version = 2,
+    encoding = "b36-v2",
     guids = { "0x0000000000000001", "0x0000000000000002" },
     chunks = { "<encoded ticks>", "<encoded ticks>" },
+    state_chunks = { "<encoded max/type changes>" },
     current_chunk_ticks = 60,
+    current_state_chunk_records = 12,
     tick_count = 120,
     position_count = 6000,
-    encoded_bytes = 49700,
+    state_count = 62,
+    encoded_bytes = 74500,
     missing_positions = 0,
     skipped_positions = 0,
     skipped_ticks = 0,
@@ -537,33 +543,42 @@ position_payload = {
 }
 ```
 
-`chunks` are internal string blocks of at most 60 ticks. They limit Lua string
-copying and SavedVariables table overhead; they are not upload batches. The
-uploader processes every chunk in order as one position stream.
+`chunks` are internal string blocks of at most 60 ticks. `state_chunks` contain
+at most 60 complete max/type records. They limit Lua string copying and
+SavedVariables table overhead; they are not upload batches. The uploader
+processes each array in order as one continuous stream.
 
-### `b36-v1` encoding
+### `b36-v2` encoding
 
 All numeric fields use lowercase base36.
 
 ```text
-<epochMs>:<mapId3>:<position8><position8>...;
+<epochMs>:<mapId3>:<unit12><unit12>...;
 ```
 
-Each position is fixed-width:
+Each per-tick unit sample is fixed-width:
 
 ```text
-<guidIndex2><x3><y3>
+<guidIndex2><x3><y3><healthPermille2><resourcePermille2>
+```
+
+State changes use a separate semicolon-terminated stream:
+
+```text
+<effectiveEpochMs>:<guidIndex2><healthMax5><resourceMax5><resourceType1>;
 ```
 
 - `epochMs`: observation time in epoch milliseconds, variable-width base36.
 - `mapId3`: map area ID, left-padded to three base36 characters.
 - `guidIndex2`: zero-based index into `guids`, left-padded to two characters.
-- `x3`, `y3`: normalized coordinates multiplied by 10,000 and rounded, each
-  left-padded to three characters.
-- `;`: tick terminator.
+- `x3`, `y3`: normalized coordinates multiplied by 10,000 and rounded.
+- Percentage fields use permille values 0 through 1,000; `zz` means unknown.
+- Maximum fields accept 0 through 60,466,174; `zzzzz` means unknown.
+- Resource type is the numeric `UnitPowerType` value; `z` means unknown.
 
-At 50 units sampled every second, one tick is approximately 415 bytes. One hour
-is approximately 1.50 MB of encoded position data plus small SavedVariables
-syntax overhead. The store warns at 3 MiB and 3.5 MiB, then stops encoded data
-at 3.94 MiB. The remaining 64 KiB of the 4 MiB file budget is reserved for Lua
-SavedVariables syntax and metadata. Previously captured data is never deleted.
+At 50 units sampled every second, the measured one-hour fixture is approximately
+2,212,500 encoded bytes (2.11 MiB) plus small SavedVariables syntax overhead.
+The store warns at 3 MiB and 3.5 MiB, then stops encoded data at 3.94 MiB. The
+remaining 64 KiB of the 4 MiB file budget is reserved for Lua SavedVariables
+syntax and metadata. A tick, new GUIDs, and its state changes are committed
+atomically; previously captured data is never deleted.

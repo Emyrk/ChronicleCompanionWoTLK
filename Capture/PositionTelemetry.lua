@@ -1,9 +1,9 @@
 -- =============================================================================
 -- Capture/PositionTelemetry.lua
 --
--- Samples visible party/raid map positions once per second while the player is
--- in combat and WoW combat logging is active. Data stays in SavedVariables for
--- the desktop uploader; it never enters the SPELL_CAST_FAILED relay.
+-- Samples visible party/raid map positions and percentage vitals once per second
+-- while the player is in combat and WoW combat logging is active. Data stays in
+-- SavedVariables for the desktop uploader; it never enters the failed-cast relay.
 -- =============================================================================
 
 local C = Chronicle.C
@@ -54,7 +54,22 @@ local function rosterUnits()
     return units
 end
 
-local function readPosition(unit)
+local function toPermille(current, maximum)
+    current = tonumber(current)
+    maximum = tonumber(maximum)
+    if not current or current ~= current or not maximum or maximum ~= maximum
+        or maximum <= 0 then
+        return nil
+    end
+    local value = math.floor(current * C.POSITION_VITAL_PERCENT_SCALE / maximum + 0.5)
+    if value < 0 then value = 0 end
+    if value > C.POSITION_VITAL_PERCENT_SCALE then
+        value = C.POSITION_VITAL_PERCENT_SCALE
+    end
+    return value
+end
+
+local function readUnitSample(unit)
     if not api("UnitExists", unit) then return nil end
     local connected = api("UnitIsConnected", unit)
     if connected == false then return nil end
@@ -62,7 +77,25 @@ local function readPosition(unit)
     local guid = api("UnitGUID", unit)
     local x, y = api("GetPlayerMapPosition", unit)
     if not guid or not x or not y or (x == 0 and y == 0) then return nil end
-    return { guid = guid, x = x, y = y }
+
+    local health = api("UnitHealth", unit)
+    local healthMax = api("UnitHealthMax", unit)
+    local resourceType = api("UnitPowerType", unit)
+    local resource = api("UnitPower", unit, resourceType)
+    local resourceMax = api("UnitPowerMax", unit, resourceType)
+    if resource == nil then resource = api("UnitMana", unit) end
+    if resourceMax == nil then resourceMax = api("UnitManaMax", unit) end
+
+    return {
+        guid = guid,
+        x = x,
+        y = y,
+        health_permille = toPermille(health, healthMax),
+        resource_permille = toPermille(resource, resourceMax),
+        health_max = tonumber(healthMax),
+        resource_max = tonumber(resourceMax),
+        resource_type = tonumber(resourceType),
+    }
 end
 
 local function mapFrameIsVisible()
@@ -124,7 +157,7 @@ local function collectPositions()
     local missing = 0
 
     for i = 1, math.min(#units, C.POSITION_UNIT_MAX) do
-        local position = readPosition(units[i])
+        local position = readUnitSample(units[i])
         if position then
             positions[#positions + 1] = position
         else
