@@ -86,6 +86,8 @@ Chronicle.C = {
     -- dictionary-indexed GUID/x/y records for the visible party or raid.
     -- Fifty units for one continuous hour are about 1.5 MiB encoded.
     -- -----------------------------------------------------------------
+    POSITION_BRIDGE_ADDON          = "ChronicleSidekickBridgeWoTLK",
+    POSITION_BRIDGE_STORAGE_VERSION = 1,
     POSITION_SCHEMA_VERSION        = 1,
     POSITION_SAMPLE_INTERVAL_SEC   = 1,
     POSITION_UNIT_MAX              = 50,

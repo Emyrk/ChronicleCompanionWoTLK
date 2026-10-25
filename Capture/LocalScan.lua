@@ -445,6 +445,7 @@ local function slashHandler(msg)
         Log:Info("  /chron inspect    -- inspect tools (ui, gear, talents, ...)")
         Log:Info("  /clog relay       -- relay status and controls")
         Log:Info("  /clog positions   -- SavedVariables position capture status")
+        Log:Info("  /clog positions clear -- clear captured positions (with confirmation)")
         Log:Info("  /clog log         -- logger settings")
         Log:Info("Type a command alone for its sub-help.")
         return
@@ -538,13 +539,18 @@ local function slashHandler(msg)
         return
     end
 
-    -- ---- /clog positions [on|off] ----
+    -- ---- /clog positions [on|off|clear] ----
     if cmd == "positions" then
         local sub = tokens[2]
         local Store = Chronicle.PositionStore
         local Telemetry = Chronicle.PositionTelemetry
         if not Store then
             Log:Warn("Position store module not loaded")
+            return
+        end
+
+        if sub == "clear" then
+            Chronicle.ConfirmClearPositions()
             return
         end
 
@@ -562,7 +568,7 @@ local function slashHandler(msg)
             Log:Info("Position capture %s", enabled and "enabled" or "disabled")
             return
         elseif sub then
-            Log:Info("Usage: /clog positions [on|off]")
+            Log:Info("Usage: /clog positions [on|off|clear]")
             return
         end
 
@@ -574,6 +580,7 @@ local function slashHandler(msg)
         end
         local sampler = Telemetry and Telemetry:IsActive() and "active" or "idle"
         if status.capped then sampler = "capped" end
+        if status.blocked_reason then sampler = "blocked" end
 
         Log:Info("Positions: %s, sampler=%s", enabled and "enabled" or "disabled", sampler)
         if status.blocked_reason then
@@ -587,7 +594,21 @@ local function slashHandler(msg)
         Log:Info("  Missing: %d  |  Skipped positions: %d  |  Skipped ticks: %d",
             status.missing_positions or 0, status.skipped_positions or 0,
             status.skipped_ticks or 0)
-        Log:Info("  Desktop reset: delete ChronicleCompanionWoTLKDB.position_payload after upload")
+        local sample = Telemetry and Telemetry:GetLastSample()
+        if sample then
+            Log:Info("  Last sample: map=%s floor=%s player=(%s, %s) available=%d missing=%d",
+                tostring(sample.map_id), tostring(sample.dungeon_level),
+                tostring(sample.player_x), tostring(sample.player_y), sample.available, sample.missing)
+            if sample.available == 0 then
+                Log:Warn("  Last sample had no usable coordinates; no position tick was saved")
+                if sample.map_visible then
+                    Log:Info("  Close the world map to allow current-zone map selection")
+                else
+                    Log:Info("  If this persists, test outdoors; this instance may not expose map positions")
+                end
+            end
+        end
+        Log:Info("  Desktop reset: delete ChronicleSidekickBridgeWoTLKDB.position_payload after upload")
         return
     end
 

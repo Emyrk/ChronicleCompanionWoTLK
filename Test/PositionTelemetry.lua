@@ -12,6 +12,7 @@ local function loadTelemetry(options)
     local scheduled = {}
     local mapSetCalls = 0
     local handlers = {}
+    local warnings = {}
     local positions = options.positions or {
         player = { 0.25, 0.75 },
         party1 = { 0.50, 0.60 },
@@ -32,9 +33,11 @@ local function loadTelemetry(options)
                 end
             end,
         },
-        Logger = { Warn = function() end },
+        Logger = { Warn = function(_, message) warnings[#warnings + 1] = message end, Info = function() end },
         Util = { TimestampMs = function() return "1786244400123" end },
         PositionStore = {
+            Clear = function() return options.clearResult ~= false end,
+            IsReady = function() return options.bridgeReady ~= false end,
             AppendTick = function(_, timestamp, mapId, samples)
                 appended[#appended + 1] = {
                     timestamp = timestamp,
@@ -80,7 +83,7 @@ local function loadTelemetry(options)
 
     dofile("Capture/PositionTelemetry.lua")
     return Chronicle.PositionTelemetry, appended, function() return missing end,
-        scheduled, handlers, function() return mapSetCalls end
+        scheduled, handlers, warnings, function() return mapSetCalls end
 end
 
 add("capture is gated by combat logging", function()
@@ -119,7 +122,7 @@ add("missing map coordinates are counted and omitted", function()
 end)
 
 add("visible world map prevents sampling an unrelated coordinate space", function()
-    local telemetry, appended, getMissing, _, _, getMapSetCalls = loadTelemetry({
+    local telemetry, appended, getMissing, _, _, _, getMapSetCalls = loadTelemetry({
         worldMapVisible = true,
         positions = {
             player = { 0, 0 },
@@ -174,6 +177,96 @@ add("start creates one timer chain and stop invalidates it", function()
     telemetry:Stop()
     scheduled[1]()
     T.equal(#appended, 1)
+end)
+
+add("unsupported map retries without saving fabricated zero coordinates", function()
+    local positions = { player = { 0, 0 }, party1 = { 0, 0 } }
+    local telemetry, appended, getMissing, scheduled, _, warnings = loadTelemetry({ positions = positions })
+    T.equal(telemetry:GetLastSample(), nil)
+    telemetry:Start()
+    for i = 1, 6 do scheduled[i]() end
+    T.truthy(telemetry:IsActive())
+    T.equal(#appended, 0)
+    T.equal(getMissing(), 14)
+    T.equal(#warnings, 1)
+    T.contains(warnings[1], "No usable map coordinates")
+    local sample = telemetry:GetLastSample()
+    T.equal(sample.available, 0)
+    T.equal(sample.missing, 2)
+    T.equal(sample.player_x, 0)
+    T.equal(sample.player_y, 0)
+    T.equal(sample.map_id, 631)
+    T.equal(sample.dungeon_level, 1)
+    sample.available = 99
+    T.equal(telemetry:GetLastSample().available, 0)
+
+    positions.player = { 0.25, 0.75 }
+    positions.party1 = { 0.50, 0.60 }
+    scheduled[7]()
+    T.equal(#appended, 1)
+    T.equal(telemetry:GetLastSample().available, 2)
+end)
+
+add("partial availability has a different warning from no coordinates", function()
+    local telemetry, appended, _, _, _, warnings = loadTelemetry({
+        positions = { player = { 0.25, 0.75 }, party1 = { 0, 0 } },
+    })
+    for i = 1, 11 do telemetry:CaptureOnce() end
+    T.equal(#appended, 11)
+    T.equal(#warnings, 1)
+    T.contains(warnings[1], "Some group positions")
+end)
+
+add("visible world map is not changed and is reported in diagnostics", function()
+    local telemetry, appended = loadTelemetry({
+        positions = { player = { 0, 0 }, party1 = { 0, 0 } },
+    })
+    _G.WorldMapFrame.IsShown = function() return true end
+    _G.SetMapToCurrentZone = function() error("must not change a visible map") end
+    T.falsy(telemetry:CaptureOnce())
+    T.equal(#appended, 0)
+    T.truthy(telemetry:GetLastSample().map_visible)
+end)
+
+add("unavailable bridge prevents sampling and timer creation", function()
+    local telemetry, appended, getMissing, scheduled = loadTelemetry({ bridgeReady = false })
+    _G.GetPlayerMapPosition = function() error("must not sample without persistent storage") end
+    telemetry:Start()
+    T.falsy(telemetry:CaptureOnce())
+    T.falsy(telemetry:IsActive())
+    T.equal(#appended, 0)
+    T.equal(#scheduled, 0)
+    T.equal(getMissing(), 0)
+end)
+
+add("clear invalidates the old timer chain and resumes enabled capture", function()
+    local telemetry, appended, _, scheduled = loadTelemetry()
+    telemetry:Start()
+    T.equal(#appended, 1)
+    local oldTimer = scheduled[1]
+    T.truthy(telemetry:ClearPositions())
+    T.equal(#appended, 2)
+    oldTimer()
+    T.equal(#appended, 2)
+    scheduled[2]()
+    T.equal(#appended, 3)
+end)
+
+add("clear honors disabled capture and removes last-sample diagnostics", function()
+    local options = {}
+    local telemetry = loadTelemetry(options)
+    telemetry:Start()
+    options.enabled = false
+    T.truthy(telemetry:ClearPositions())
+    T.falsy(telemetry:IsActive())
+    T.equal(telemetry:GetLastSample(), nil)
+end)
+
+add("failed clear leaves the running sampler alone", function()
+    local telemetry = loadTelemetry({ clearResult = false })
+    telemetry:Start()
+    T.falsy(telemetry:ClearPositions())
+    T.truthy(telemetry:IsActive())
 end)
 
 return cases

@@ -17,6 +17,8 @@ Chronicle.PositionTelemetry = Telemetry
 local active = false
 local generation = 0
 local missingWarned = false
+local unavailableWarned = false
+local lastSample = nil
 
 local function api(name, ...)
     local fn = _G[name]
@@ -28,7 +30,7 @@ end
 
 local function shouldCapture()
     if not Config:Get("position_telemetry_enabled", true) then return false end
-    if Store:IsCapped() then return false end
+    if not Store:IsReady() or Store:IsCapped() then return false end
     if not api("LoggingCombat") then return false end
     if not api("UnitAffectingCombat", "player") then return false end
     return true
@@ -80,6 +82,18 @@ local function restoreMap(continent, zone, dungeonLevel)
     end
 end
 
+local function recordSample(mapId, playerX, playerY, available, missing)
+    lastSample = {
+        map_id = mapId,
+        dungeon_level = api("GetCurrentMapDungeonLevel"),
+        player_x = playerX,
+        player_y = playerY,
+        available = available,
+        missing = missing,
+        map_visible = mapFrameIsVisible(),
+    }
+end
+
 local function collectPositions()
     local units = rosterUnits()
     local oldContinent = api("GetCurrentMapContinent")
@@ -92,14 +106,20 @@ local function collectPositions()
         -- Never sample a user-selected map as if it were the player's current
         -- coordinate space. Wait until the world map is hidden instead.
         if mapFrameIsVisible() or type(SetMapToCurrentZone) ~= "function" then
+            recordSample(0, playerX, playerY, 0, #units)
             return 0, {}, #units
         end
         local ok = pcall(SetMapToCurrentZone)
-        if not ok then return 0, {}, #units end
+        if not ok then
+            recordSample(0, playerX, playerY, 0, #units)
+            return 0, {}, #units
+        end
         changedMap = true
     end
 
     local mapId = tonumber(api("GetCurrentMapAreaID")) or 0
+    -- Diagnostics must describe the sampled map, before the old map is restored.
+    playerX, playerY = api("GetPlayerMapPosition", "player")
     local positions = {}
     local missing = 0
 
@@ -112,6 +132,7 @@ local function collectPositions()
         end
     end
 
+    recordSample(mapId, playerX, playerY, #positions, missing)
     if changedMap then
         restoreMap(oldContinent, oldZone, oldDungeonLevel)
     end
@@ -143,9 +164,12 @@ function Telemetry:CaptureOnce()
     local mapId, positions, missing = collectPositions()
     if missing > 0 then
         Store:RecordMissing(missing)
-        if not missingWarned then
-            local status = Store:GetStatus()
-            if status.missing_positions >= C.POSITION_MISSING_WARN_SAMPLES then
+        local status = Store:GetStatus()
+        if status.missing_positions >= C.POSITION_MISSING_WARN_SAMPLES then
+            if #positions == 0 and not unavailableWarned then
+                unavailableWarned = true
+                Log:Warn("No usable map coordinates returned; no position ticks saved. Some WotLK instances have no supported map. See /clog positions")
+            elseif #positions > 0 and not missingWarned then
                 missingWarned = true
                 Log:Warn("Some group positions are unavailable; capture will continue with visible units")
             end
@@ -173,10 +197,32 @@ function Telemetry:Stop()
     generation = generation + 1
 end
 
+--- Clear capture data and diagnostics, then resume only when capture is enabled.
+-- @treturn boolean true when the position store was reset
+function Telemetry:ClearPositions()
+    if not Store:Clear() then return false end
+    self:Stop()
+    missingWarned = false
+    unavailableWarned = false
+    lastSample = nil
+    self:Start()
+    Log:Info("Position data cleared. Use /reload or log out to save the cleared state to disk")
+    return true
+end
+
 --- Return whether the recurring sampler is active.
 -- @treturn boolean
 function Telemetry:IsActive()
     return active
+end
+
+--- Return diagnostics for the last attempted tick, without changing the map.
+-- @treturn table|nil copy of the last sample summary, or nil before sampling
+function Telemetry:GetLastSample()
+    if not lastSample then return nil end
+    local result = {}
+    for key, value in pairs(lastSample) do result[key] = value end
+    return result
 end
 
 Chronicle.RegisterEvent("PLAYER_LOGIN", function()

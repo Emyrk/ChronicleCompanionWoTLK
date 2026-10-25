@@ -11,7 +11,7 @@
 --  |  Logging: OFF  [Toggle]      Auto Combat Logger    |
 --  |  Relay: ACTIVE               [x] Auto in Raids     |
 --  |  Instance: No                [x] Auto in Dungeons   |
---  |                              [x] Auto Relay         |
+--  |                              [x] Capture positions         |
 --  |  Version Info                                      |
 --  |  Addon: 0.1                Debug                   |
 --  |  Build: 12340              Log Level               |
@@ -65,6 +65,7 @@ local instanceText  = nil
 local versionText   = nil
 local buildText     = nil
 local checkboxes    = {}  -- key -> CheckButton
+local clearPositionsButton = nil
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -104,6 +105,21 @@ local function makeCheckbox(parent, label, configKey, onClick)
     end)
     checkboxes[configKey] = cb
     return cb
+end
+
+local function positionStorageReady()
+    local store = Chronicle.PositionStore
+    return store and store:IsReady() or false
+end
+
+local function syncPositionSampler()
+    local telemetry = Chronicle.PositionTelemetry
+    if not telemetry then return end
+    if Config:Get("position_telemetry_enabled", true) and positionStorageReady() then
+        telemetry:Start()
+    else
+        telemetry:Stop()
+    end
 end
 
 -- (dropdowns handle their own selection highlighting)
@@ -164,7 +180,25 @@ local function refresh()
 
     -- Checkboxes
     for key, cb in pairs(checkboxes) do
-        cb:SetChecked(Config:Get(key) and true or false)
+        if key == "position_telemetry_enabled" then
+            local available = positionStorageReady()
+            cb:SetChecked(available and Config:Get(key, true) and true or false)
+            if available then cb:Enable() else cb:Disable() end
+            local color = available and C_LABEL or C_DIM
+            cb._label:SetTextColor(color[1], color[2], color[3])
+            cb._availability:SetText(available and "" or "Requires compatible Sidekick Bridge")
+        else
+            cb:SetChecked(Config:Get(key) and true or false)
+        end
+    end
+
+    if clearPositionsButton then
+        local store = Chronicle.PositionStore
+        if store and store:CanClear() then
+            clearPositionsButton:Enable()
+        else
+            clearPositionsButton:Disable()
+        end
     end
 
     -- Dropdowns
@@ -268,6 +302,12 @@ local function buildFrame()
     buildText:SetPoint("TOPLEFT", f, "TOPLEFT", INSET, y)
     buildText:SetText("Build: " .. tostring(wowBuild or "?"))
 
+    y = y - ROW_H - 12
+    clearPositionsButton = makeButton(f, "Clear positions", 160, function()
+        Chronicle.ConfirmClearPositions()
+    end)
+    clearPositionsButton:SetPoint("TOPLEFT", f, "TOPLEFT", INSET, y)
+
     -- =====================================================================
     -- RIGHT COLUMN
     -- =====================================================================
@@ -285,6 +325,15 @@ local function buildFrame()
     ry = ry - ROW_H - 2
     local cbDungeon = makeCheckbox(f, "Auto-enable in Dungeons", "auto_combatlog_dungeon")
     cbDungeon:SetPoint("TOPLEFT", f, "TOPLEFT", COL2_X, ry)
+
+    ry = ry - ROW_H - 2
+    local cbPositions = makeCheckbox(f, "Capture positions", "position_telemetry_enabled",
+        syncPositionSampler)
+    cbPositions:SetPoint("TOPLEFT", f, "TOPLEFT", COL2_X, ry)
+    -- Keep the explanation visible even when the disabled button cannot hover.
+    ry = ry - ROW_H
+    cbPositions._availability = makeLabel(f, "small", C_DIM[1], C_DIM[2], C_DIM[3])
+    cbPositions._availability:SetPoint("TOPLEFT", f, "TOPLEFT", COL2_X, ry)
 
     -- ---- Debug section ----
     ry = ry - ROW_H - 12
@@ -378,6 +427,7 @@ local function buildFrame()
 
     local resetBtn = makeButton(f, "Reset Settings", 100, function()
         Config:ResetAll()
+        syncPositionSampler()
         Log:SetLevel(Config:Get("log_level"))
         local idx = Config:Get("log_window")
         local frame = _G["ChatFrame" .. (idx or 1)]
@@ -428,4 +478,26 @@ function Chronicle.HideSettingsUI()
     if mainFrame and mainFrame:IsShown() then
         mainFrame:Hide()
     end
+end
+
+-- Confirmation is shared by the button and slash command; neither path deletes
+-- upload data until the player explicitly accepts the standard game dialog.
+StaticPopupDialogs["CHRONICLE_CLEAR_POSITIONS"] = {
+    text = "Delete all captured Chronicle positions, including legacy data? Unuploaded positions will be lost. Sampling resumes if enabled.",
+    button1 = "Clear positions",
+    button2 = CANCEL,
+    OnAccept = function()
+        local telemetry = Chronicle.PositionTelemetry
+        if telemetry then telemetry:ClearPositions() end
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+}
+
+--- Ask for confirmation before deleting captured position data.
+-- @treturn nil
+function Chronicle.ConfirmClearPositions()
+    local ok, err = pcall(StaticPopup_Show, "CHRONICLE_CLEAR_POSITIONS")
+    if not ok then Log:Warn("Unable to show position clear confirmation: %s", tostring(err)) end
 end

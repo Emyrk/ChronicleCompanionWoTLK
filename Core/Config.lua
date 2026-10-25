@@ -148,8 +148,8 @@ end
 --- Reset all account settings to defaults.
 function Config:ResetAll()
     if not db then return end
-    -- Position telemetry is upload data, not a user preference. Preserve it
-    -- when the settings panel resets account defaults.
+    -- Keep legacy upload data until PositionStore can migrate it to the bridge.
+    -- Resetting settings must not discard pending captures if the bridge is absent.
     local positionPayload = db.position_payload
     for k in pairs(db) do db[k] = nil end
     deepMerge(db, ACCOUNT_DEFAULTS)

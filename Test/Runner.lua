@@ -4,6 +4,7 @@ local suites = {
     "Test/Config.lua",
     "Test/PositionStore.lua",
     "Test/PositionTelemetry.lua",
+    "Test/SettingsUI.lua",
 }
 
 local total = 0

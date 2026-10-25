@@ -9,6 +9,8 @@ local function loadStore(overrides)
     overrides = overrides or {}
     _G.Chronicle = {
         C = {
+            POSITION_BRIDGE_ADDON = "ChronicleSidekickBridgeWoTLK",
+            POSITION_BRIDGE_STORAGE_VERSION = 1,
             POSITION_SCHEMA_VERSION = 1,
             POSITION_UNIT_MAX = 50,
             POSITION_GUID_INDEX_WIDTH = 2,
@@ -26,10 +28,17 @@ local function loadStore(overrides)
     _G.GetTime = function() return 0 end
     dofile("Core/Util.lua")
 
-    local db = overrides.db or { unrelated = "keep" }
+    local db = overrides.db or { storage_version = 1, unrelated = "keep" }
+    if db.storage_version == nil then db.storage_version = 1 end
+    _G.ChronicleSidekickBridgeWoTLKDB = db
+    _G.IsAddOnLoaded = function(name)
+        T.equal(name, "ChronicleSidekickBridgeWoTLK")
+        return not overrides.missingBridge
+    end
+    local account = overrides.account or { unrelated = "main settings" }
     local warnings = {}
     Chronicle.Config = {
-        GetAccountDB = function() return db end,
+        GetAccountDB = function() return account end,
     }
     Chronicle.Logger = {
         Alert = function(_, message) warnings[#warnings + 1] = message end,
@@ -37,7 +46,7 @@ local function loadStore(overrides)
 
     dofile("Core/PositionStore.lua")
     Chronicle.PositionStore:Hydrate()
-    return Chronicle.PositionStore, db, warnings
+    return Chronicle.PositionStore, db, warnings, account
 end
 
 local function pos(guid, x, y)
@@ -202,6 +211,110 @@ add("desktop deletion resets the payload on the next hydrate", function()
     store:Hydrate()
     T.equal(store:GetStatus().tick_count, 0)
     T.equal(#db.position_payload.guids, 0)
+end)
+
+add("missing bridge blocks all writes without creating a fallback payload", function()
+    local store, db, warnings, account = loadStore({ missingBridge = true })
+    T.falsy(store:IsReady())
+    T.falsy(store:AppendTick("1786244400000", 537, { pos("0x1", 0.2, 0.3) }))
+    store:RecordMissing(5)
+    T.equal(db.position_payload, nil)
+    T.equal(account.position_payload, nil)
+    T.falsy(store:GetStatus().ready)
+    T.contains(store:GetStatus().blocked_reason, "not loaded")
+    T.equal(#warnings, 1)
+end)
+
+add("missing or incompatible bridge database is preserved", function()
+    local store, db = loadStore({ db = { storage_version = 99 } })
+    T.falsy(store:IsReady())
+    T.equal(db.position_payload, nil)
+    T.equal(store:GetStatus().blocked_reason, "unsupported bridge storage version")
+    _G.ChronicleSidekickBridgeWoTLKDB = nil
+    T.falsy(store:Hydrate())
+    T.equal(_G.ChronicleSidekickBridgeWoTLKDB, nil)
+    T.equal(store:GetStatus().blocked_reason, "bridge database is not a table")
+end)
+
+add("legacy capture migrates once without changing main settings", function()
+    local oldStore, oldDB = loadStore()
+    T.truthy(oldStore:AppendTick("1786244400000", 537, { pos("0x1", 0.2, 0.3) }))
+    local legacy = oldDB.position_payload
+    local account = { position_payload = legacy, unrelated = "keep" }
+    local store, db = loadStore({ account = account })
+    T.truthy(store:IsReady())
+    T.equal(db.position_payload, legacy)
+    T.equal(account.position_payload, nil)
+    T.equal(account.unrelated, "keep")
+    T.equal(store:GetStatus().tick_count, 1)
+    T.truthy(store:Hydrate())
+    T.equal(store:GetStatus().tick_count, 1)
+end)
+
+add("invalid legacy capture is not deleted during migration", function()
+    local legacy = { schema_version = 99 }
+    local account = { position_payload = legacy }
+    local store, db = loadStore({ account = account })
+    T.falsy(store:IsReady())
+    T.equal(account.position_payload, legacy)
+    T.equal(db.position_payload, nil)
+end)
+
+add("conflicting legacy and bridge data blocks capture without replacing either", function()
+    local oldStore, oldDB = loadStore()
+    local legacy = oldDB.position_payload
+    local account = { position_payload = legacy }
+    local destination = { storage_version = 1, position_payload = { preserve = true } }
+    local store, db = loadStore({ db = destination, account = account })
+    T.falsy(store:IsReady())
+    T.equal(db.position_payload.preserve, true)
+    T.equal(account.position_payload, legacy)
+    T.contains(store:GetStatus().blocked_reason, "both legacy and bridge")
+end)
+
+add("explicit clear resets counters, GUIDs and blocks while preserving unrelated data", function()
+    local store, db, _, account = loadStore()
+    T.truthy(store:AppendTick("1786244400000", 537, { pos("0x1", 0.2, 0.3) }))
+    store:RecordMissing(10)
+    db.other_payload = "keep"
+    T.truthy(store:CanClear())
+    T.truthy(store:Clear())
+    local status = store:GetStatus()
+    T.equal(status.tick_count, 0)
+    T.equal(status.guid_count, 0)
+    T.equal(status.chunk_count, 0)
+    T.equal(status.encoded_bytes, 0)
+    T.equal(status.missing_positions, 0)
+    T.falsy(status.capped)
+    T.equal(db.other_payload, "keep")
+    T.equal(account.unrelated, "main settings")
+    T.truthy(store:AppendTick("1786244401000", 537, { pos("0x2", 0.4, 0.5) }))
+    T.equal(db.position_payload.guids[1], "0x2")
+end)
+
+add("explicit clear recovers conflicting or unreadable positions and removes legacy history", function()
+    local legacy = { schema_version = 99 }
+    local account = { position_payload = legacy, setting = "keep" }
+    local store, db = loadStore({ account = account, db = { storage_version = 1, position_payload = false } })
+    T.falsy(store:IsReady())
+    T.truthy(store:CanClear())
+    T.truthy(store:Clear())
+    T.equal(account.position_payload, nil)
+    T.equal(account.setting, "keep")
+    T.equal(db.position_payload.tick_count, 0)
+    T.truthy(store:IsReady())
+end)
+
+add("clear refuses absent or incompatible bridge without deleting data", function()
+    for _, options in ipairs({ { missingBridge = true }, { db = { storage_version = 99 } } }) do
+        local legacy = { keep = true }
+        options.account = { position_payload = legacy }
+        local store, db, _, account = loadStore(options)
+        T.falsy(store:CanClear())
+        T.falsy(store:Clear())
+        T.equal(account.position_payload, legacy)
+        T.equal(db.position_payload, nil)
+    end
 end)
 
 return cases

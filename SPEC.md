@@ -454,8 +454,47 @@ The normative desktop/server decoding and validation contract is documented in
 Position telemetry does not use the failed-cast transport. It is stored under:
 
 ```text
-ChronicleCompanionWoTLKDB.position_payload
+ChronicleSidekickBridgeWoTLKDB.position_payload
 ```
+
+Position capture requires the optional
+[ChronicleSidekickBridgeWoTLK](https://github.com/Emyrk/ChronicleSidekickBridgeWoTLK)
+addon, installed as a sibling under `Interface/AddOns`. The main TOC declares
+`OptionalDeps` so the bridge loads first when installed, without preventing the
+main addon from loading when it is absent or disabled. Without a loaded bridge
+and a compatible `storage_version = 1` database, position sampling stays off;
+`/clog positions` reports the blocking reason. Other Chronicle features remain
+available. There is no fallback to the main addon's storage.
+
+The options window (`/clog`) includes a **Capture positions** checkbox. Changes
+apply immediately: unchecking stops the sampler, and checking starts it if the
+normal combat/logging gates are satisfied. If bridge storage is unavailable,
+the checkbox is unchecked and disabled with a dependency explanation. This does
+not erase the saved preference; it becomes selectable again when compatible
+storage is available. Turning capture off does not delete collected data.
+
+Use **Clear positions** in the options window or `/clog positions clear` to
+open a confirmation dialog. Accepting discards all captured position history,
+including any legacy main-addon position payload, and resets counters, blocks,
+GUIDs, cap warnings, and last-sample diagnostics. Other bridge payloads and addon
+settings are preserved. The action can recover capped or unreadable position
+payloads, but requires a loaded bridge with a compatible storage container.
+Cancel or Escape leaves data unchanged. Sampling resumes immediately if enabled
+and capture gates are met, so new data may appear after clearing. WoW writes the
+reset data at logout or `/reload`; the addon does not delete the file itself.
+
+The bridge owns the account-wide file:
+
+```text
+WTF/Account/<ACCOUNT>/SavedVariables/ChronicleSidekickBridgeWoTLK.lua
+```
+
+On upgrade, an existing main-addon `position_payload` migrates when the bridge
+has no payload. The legacy key is removed only after payload validation succeeds.
+If both locations contain separate payloads, capture blocks rather than merging
+or replacing either history; upload and clear the legacy payload while WoW is
+closed before resuming. Missing or incompatible bridge storage leaves legacy
+data untouched.
 
 The account-wide table is uploaded beside `WoWCombatLog.txt` after WoW exits.
 After both files upload successfully, the desktop application deletes the combat
@@ -467,6 +506,17 @@ Capture runs once per second only while both `LoggingCombat()` and
 one map ID, and the available GUID/x/y positions for the visible party or raid.
 The map ID is required because normalized x/y coordinates are only meaningful in
 the map coordinate space where they were observed.
+
+Coordinates come from the stock 3.3.5 `GetPlayerMapPosition` API, not world-space
+unit positions. A `(0, 0)` result means unavailable and is never saved. Some
+instances do not expose usable map positions even after selecting the current
+zone; being nearby or visible does not guarantee coordinates. If every unit is
+unavailable, the sampler continues retrying but appends no tick. `/clog positions`
+shows the last sampled map/floor, raw player coordinates, and available/missing
+unit counts to distinguish this case from a storage failure. Close the world map
+to permit current-zone selection; test outdoors to check whether the limitation
+is specific to an instance. SavedVariables are flushed to disk by WoW at logout
+or UI reload, not every sampling tick.
 
 ### Table shape
 

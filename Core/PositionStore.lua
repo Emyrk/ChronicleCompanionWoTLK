@@ -3,7 +3,7 @@
 --
 -- Bounded account-wide SavedVariables storage for timestamped group positions.
 -- The desktop uploader sends this payload beside WoWCombatLog.txt, then removes
--- ChronicleCompanionWoTLKDB.position_payload while the game is closed.
+-- ChronicleSidekickBridgeWoTLKDB.position_payload while the game is closed.
 -- =============================================================================
 
 local C = Chronicle.C
@@ -41,7 +41,7 @@ local function blockCapture(reason)
     payload = nil
     guidToIndex = {}
     if blockedReason ~= reason then
-        Log:Alert("Position capture disabled to preserve unreadable SavedVariables: %s", reason)
+        Log:Alert("Position capture disabled: %s", reason)
     end
     blockedReason = reason
     return false
@@ -111,29 +111,63 @@ local function fixedBase36(value, width)
     return encoded
 end
 
---- Hydrate the position payload from the account-wide SavedVariables table.
+local function getBridgeDB()
+    -- OptionalDeps establishes load order without disabling the main addon
+    -- when the storage addon is missing or disabled. Never create its global
+    -- here: without its TOC WoW would not persist that table.
+    local ok, loaded = false, false
+    if type(IsAddOnLoaded) == "function" then
+        ok, loaded = pcall(IsAddOnLoaded, C.POSITION_BRIDGE_ADDON)
+    end
+    if not ok or not loaded then
+        return nil, "ChronicleSidekickBridgeWoTLK is not loaded; install and enable it for position tracking"
+    end
+    local db = ChronicleSidekickBridgeWoTLKDB
+    if type(db) ~= "table" then
+        return nil, "bridge database is not a table"
+    end
+    if db.storage_version ~= C.POSITION_BRIDGE_STORAGE_VERSION then
+        return nil, "unsupported bridge storage version"
+    end
+
+    return db
+end
+
+--- Hydrate the position payload from the bridge account-wide SavedVariables.
 -- The desktop application resets capture by deleting position_payload while
 -- WoW is closed; the next hydrate recreates an empty payload.
+-- @treturn boolean true when compatible persistent storage is ready
 function Store:Hydrate()
-    local db = Config and Config:GetAccountDB()
-    if type(db) ~= "table" then return false end
+    local db, reason = getBridgeDB()
+    if not db then return blockCapture(reason) end
 
-    if db.position_payload == nil then
-        blockedReason = nil
-        db.position_payload = newPayload()
-    elseif type(db.position_payload) ~= "table" then
+    local legacyDB = Config and Config:GetAccountDB()
+    local legacy
+    if type(legacyDB) == "table" then legacy = legacyDB.position_payload end
+    if legacy ~= nil and db.position_payload ~= nil
+        and db.position_payload ~= legacy then
+        return blockCapture("both legacy and bridge position payloads exist; upload and clear the legacy payload before capture can resume")
+    end
+    local migrating = legacy ~= nil
+    -- Keep the legacy source until validation succeeds. Both locations are
+    -- account-wide, so migration does not assign history to one character.
+    local candidate = db.position_payload
+    if candidate == nil then candidate = legacy end
+    if candidate == nil then candidate = newPayload() end
+
+    if type(candidate) ~= "table" then
         return blockCapture("position_payload is not a table")
-    elseif db.position_payload.schema_version ~= C.POSITION_SCHEMA_VERSION then
+    elseif candidate.schema_version ~= C.POSITION_SCHEMA_VERSION then
         return blockCapture("unsupported schema version")
-    elseif db.position_payload.encoding ~= "b36-v1" then
+    elseif candidate.encoding ~= "b36-v1" then
         return blockCapture("unsupported encoding")
-    elseif type(db.position_payload.guids) ~= "table" then
+    elseif type(candidate.guids) ~= "table" then
         return blockCapture("GUID dictionary is not a table")
-    elseif type(db.position_payload.chunks) ~= "table" then
+    elseif type(candidate.chunks) ~= "table" then
         return blockCapture("chunk list is not a table")
     end
 
-    payload = db.position_payload
+    payload = candidate
     if #payload.guids > C.POSITION_GUID_MAX then
         return blockCapture("GUID dictionary exceeds its supported size")
     end
@@ -174,7 +208,32 @@ function Store:Hydrate()
     end
     warnAtThresholds()
     if payload.capped then warnAtCap() end
+    db.position_payload = payload
+    if migrating then legacyDB.position_payload = nil end
     return true
+end
+
+--- Return whether the bridge container permits an explicit position reset.
+-- Invalid or capped position payloads can still be cleared.
+-- @treturn boolean
+function Store:CanClear()
+    local db = getBridgeDB()
+    return db ~= nil
+end
+
+--- Explicitly discard captured positions, preserving settings and other payloads.
+-- Also removes legacy capture data so hydration cannot restore deleted history.
+-- @treturn boolean true when the store was reset
+function Store:Clear()
+    local db, reason = getBridgeDB()
+    if not db then return blockCapture(reason) end
+    local legacyDB = Config and Config:GetAccountDB()
+    if type(legacyDB) == "table" then legacyDB.position_payload = nil end
+    db.position_payload = newPayload()
+    payload = nil
+    guidToIndex = {}
+    blockedReason = nil
+    return self:Hydrate()
 end
 
 --- Append one timestamped set of GUID positions.
@@ -289,6 +348,12 @@ end
 function Store:RecordMissing(count)
     if not payload and not self:Hydrate() then return end
     payload.missing_positions = payload.missing_positions + math.max(tonumber(count) or 1, 0)
+end
+
+--- Return whether a validated, persistent storage target is available.
+-- @treturn boolean
+function Store:IsReady()
+    return payload ~= nil or self:Hydrate()
 end
 
 --- Return whether the hard cap has stopped capture.

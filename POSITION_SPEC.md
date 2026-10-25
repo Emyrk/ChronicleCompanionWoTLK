@@ -10,24 +10,26 @@ WoW installation.
 
 ## 1. Lifecycle and ownership
 
-The addon writes one account-wide value:
+The addon writes one account-wide value owned by the optional
+ChronicleSidekickBridgeWoTLK addon:
 
 ```lua
-ChronicleCompanionWoTLKDB.position_payload
+ChronicleSidekickBridgeWoTLKDB.position_payload
 ```
 
 The value is append-only across characters and WoW login sessions until a
-successful desktop upload resets it. There are no upload batches, per-session
+successful desktop upload resets it, or the user confirms **Clear positions**
+in settings or via `/clog positions clear`. There are no upload batches, per-session
 acknowledgments, or persisted Chronicle session IDs.
 
 The desktop application must:
 
 1. Wait until WoW has exited and the SavedVariables file is stable.
-2. Read `WoWCombatLog.txt` and `ChronicleCompanionWoTLKDB.position_payload`.
+2. Read `WoWCombatLog.txt` and `ChronicleSidekickBridgeWoTLKDB.position_payload`.
 3. Upload both as one logical Chronicle upload.
 4. Wait for a successful server response.
 5. Atomically rewrite the SavedVariables file, removing only
-   `ChronicleCompanionWoTLKDB.position_payload` and preserving every unrelated
+   `ChronicleSidekickBridgeWoTLKDB.position_payload` and preserving every unrelated
    key.
 6. Delete the uploaded combat log only after the SavedVariables replacement
    succeeds.
@@ -43,7 +45,7 @@ The desktop app should parse the SavedVariables Lua file as data and send a JSON
 the server should evaluate arbitrary Lua source. The usual on-disk source is:
 
 ```text
-WTF/Account/<account>/SavedVariables/ChronicleCompanionWoTLK.lua
+WTF/Account/<account>/SavedVariables/ChronicleSidekickBridgeWoTLK.lua
 ```
 
 The exact multipart field names and authentication scheme remain outside this
@@ -51,7 +53,8 @@ specification.
 
 ## 2. Capture semantics
 
-The addon attempts one tick per second only while both conditions are true:
+Position capture must be enabled in settings and compatible bridge storage must
+be loaded. The addon attempts one tick per second only while both conditions are true:
 
 ```lua
 LoggingCombat()

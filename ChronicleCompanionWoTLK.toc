@@ -3,6 +3,7 @@
 ## Notes: Companion addon for ChronicleClassic.com - WotLK 3.3.5a
 ## Version: 0.8
 ## DefaultState: enabled
+## OptionalDeps: ChronicleSidekickBridgeWoTLK
 ## Author: Emyrk
 ## SavedVariables: ChronicleCompanionWoTLKDB
 ## SavedVariablesPerCharacter: ChronicleCompanionWoTLKCharDB
