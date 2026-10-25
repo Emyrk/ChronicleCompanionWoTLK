@@ -302,12 +302,6 @@ local function buildFrame()
     buildText:SetPoint("TOPLEFT", f, "TOPLEFT", INSET, y)
     buildText:SetText("Build: " .. tostring(wowBuild or "?"))
 
-    y = y - ROW_H - 12
-    clearPositionsButton = makeButton(f, "Clear positions", 160, function()
-        Chronicle.ConfirmClearPositions()
-    end)
-    clearPositionsButton:SetPoint("TOPLEFT", f, "TOPLEFT", INSET, y)
-
     -- =====================================================================
     -- RIGHT COLUMN
     -- =====================================================================
@@ -330,6 +324,11 @@ local function buildFrame()
     local cbPositions = makeCheckbox(f, "Capture positions", "position_telemetry_enabled",
         syncPositionSampler)
     cbPositions:SetPoint("TOPLEFT", f, "TOPLEFT", COL2_X, ry)
+    ry = ry - ROW_H - 4
+    clearPositionsButton = makeButton(f, "Clear positions", 160, function()
+        Chronicle.ConfirmClearPositions()
+    end)
+    clearPositionsButton:SetPoint("TOPLEFT", cbPositions, "BOTTOMLEFT", 0, -2)
     -- Keep the explanation visible even when the disabled button cannot hover.
     ry = ry - ROW_H
     cbPositions._availability = makeLabel(f, "small", C_DIM[1], C_DIM[2], C_DIM[3])

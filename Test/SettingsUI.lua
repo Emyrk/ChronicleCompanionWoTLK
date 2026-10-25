@@ -17,6 +17,7 @@ local function loadSettings(options)
         widgets[#widgets + 1] = w
         return w
     end
+    methods.SetPoint = function(self, ...) self.point = { ... } end
     methods.CreateFontString = widget
     methods.SetText = function(self, text) self.text = text end
     methods.SetScript = function(self, event, fn) self.scripts[event] = fn end
@@ -152,6 +153,15 @@ cases[#cases + 1] = { name = "positions clear slash command opens the same confi
     local popup, clears = state()
     T.equal(popup, "CHRONICLE_CLEAR_POSITIONS")
     T.equal(clears, 0)
+end }
+
+cases[#cases + 1] = { name = "clear positions button is anchored directly below capture positions", run = function()
+    local checkbox, _, _, _, button = loadSettings()
+    T.equal(button.point[1], "TOPLEFT")
+    T.equal(button.point[2], checkbox)
+    T.equal(button.point[3], "BOTTOMLEFT")
+    T.equal(button.point[4], 0)
+    T.truthy(button.point[5] < 0)
 end }
 
 return cases
