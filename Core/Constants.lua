@@ -95,6 +95,7 @@ Chronicle.C = {
     POSITION_STATE_BLOCK_RECORDS   = 60,
     POSITION_GUID_INDEX_WIDTH      = 2,
     POSITION_GUID_MAX              = 1296,     -- 36^2 dictionary entries
+    POSITION_GUID_BYTE_MAX         = 64,
     POSITION_COORD_SCALE           = 10000,
     POSITION_COORD_WIDTH           = 3,
     POSITION_MAP_WIDTH             = 3,

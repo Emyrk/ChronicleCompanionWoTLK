@@ -14,6 +14,7 @@ local function loadStore(overrides)
             POSITION_SCHEMA_VERSION = 2,
             POSITION_UNIT_MAX = 50,
             POSITION_GUID_INDEX_WIDTH = 2,
+            POSITION_GUID_BYTE_MAX = 64,
             POSITION_COORD_SCALE = 10000,
             POSITION_COORD_WIDTH = 3,
             POSITION_MAP_WIDTH = 3,
@@ -384,6 +385,35 @@ add("malformed vital state strings block without hydrating diagnostics", functio
     T.equal(malformed.state_count, nil)
     T.equal(malformed.current_state_chunk_records, nil)
     T.equal(store:GetStatus().blocked_reason, "vital state chunk contains malformed data")
+end)
+
+add("non-ASCII or oversized GUID dictionary entries block capture", function()
+    local invalidGuids = {
+        string.rep("a", 65),
+        "guid-" .. string.char(194, 169),
+    }
+    for i = 1, #invalidGuids do
+        local malformed = {
+            schema_version = 2,
+            encoding = "b36-v2",
+            guids = { invalidGuids[i] },
+            chunks = {},
+            state_chunks = {},
+        }
+        local store, db = loadStore({ db = { position_payload = malformed } })
+        T.equal(db.position_payload, malformed)
+        T.equal(store:GetStatus().blocked_reason,
+            "GUID dictionary contains an invalid entry")
+    end
+end)
+
+add("invalid GUID samples are skipped before dictionary insertion", function()
+    local store, db = loadStore()
+    T.falsy(store:AppendTick("1786244400000", 631, {
+        pos(string.rep("a", 65), 0.25, 0.75),
+    }))
+    T.equal(#db.position_payload.guids, 0)
+    T.equal(db.position_payload.tick_count, 0)
 end)
 
 add("duplicate GUID dictionary entries block capture without mutation", function()

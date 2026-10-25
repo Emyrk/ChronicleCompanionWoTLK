@@ -104,6 +104,16 @@ local function warnAtCap()
     Log:Alert("Position data reached its hard cap; capture stopped until the desktop uploader resets it")
 end
 
+local function validGuid(guid)
+    if type(guid) ~= "string" or guid == "" or #guid > C.POSITION_GUID_BYTE_MAX then
+        return false
+    end
+    for i = 1, #guid do
+        if guid:byte(i) > 127 then return false end
+    end
+    return true
+end
+
 local function roundCoordinate(value)
     local n = tonumber(value)
     if not n or n ~= n then return nil end
@@ -366,7 +376,7 @@ function Store:Hydrate()
     local seenGuids = {}
     for i = 1, #payload.guids do
         local guid = payload.guids[i]
-        if type(guid) ~= "string" or guid == "" then
+        if not validGuid(guid) then
             return blockCapture("GUID dictionary contains an invalid entry")
         end
         if seenGuids[guid] then
@@ -473,7 +483,7 @@ function Store:AppendTick(timestampMs, mapId, positions)
     for i = 1, math.min(#positions, C.POSITION_UNIT_MAX) do
         local position = positions[i]
         local guid = position and position.guid
-        if type(guid) == "string" and guid ~= "" and not seen[guid] then
+        if validGuid(guid) and not seen[guid] then
             seen[guid] = true
             local x = roundCoordinate(position.x)
             local y = roundCoordinate(position.y)
