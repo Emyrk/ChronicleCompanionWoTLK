@@ -164,4 +164,17 @@ cases[#cases + 1] = { name = "clear positions button is anchored directly below 
     T.truthy(button.point[5] < 0)
 end }
 
+cases[#cases + 1] = { name = "positions probe slash command runs diagnostics without confirmation", run = function()
+    local _, _, _, _, _, state = loadSettings()
+    local probes = 0
+    Chronicle.PositionTelemetry.ProbeEnemyPositions = function() probes = probes + 1 end
+    Chronicle.Capture = {}
+    dofile("Capture/LocalScan.lua")
+    Chronicle._slashHandler("positions probe")
+    local popup, clears = state()
+    T.equal(probes, 1)
+    T.equal(popup, nil)
+    T.equal(clears, 0)
+end }
+
 return cases

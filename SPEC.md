@@ -496,6 +496,10 @@ or replacing either history; upload and clear the legacy payload while WoW is
 closed before resuming. Missing or incompatible bridge storage leaves legacy
 data untouched.
 
+Existing `b36-v1` and `b36-v2` payloads are preserved unchanged and block new
+capture until uploaded by compatible tooling or explicitly cleared by the user.
+They must not be reinterpreted as `b36-v3` or migrated by guessing floors.
+
 The account-wide table is uploaded beside `WoWCombatLog.txt` after WoW exits.
 After both files upload successfully, the desktop application deletes the combat
 log and removes only the `position_payload` key from the SavedVariables file.
@@ -503,10 +507,12 @@ The addon recreates an empty payload on the next login.
 
 Capture runs once per second only while both `LoggingCombat()` and
 `UnitAffectingCombat("player")` are true. Each tick contains one epoch timestamp,
-one map ID, and the available GUID/x/y, health-permille, and resource-permille
-samples for the visible party or raid. The map ID is required because normalized
+one map ID, one selected dungeon-map level (floor), and the available GUID/x/y,
+health-permille, and resource-permille samples for the visible party or raid. The map ID is required because normalized
 x/y coordinates are only meaningful in the map coordinate space where they were
-observed. Max health, max resource, and numeric resource type are written to a
+observed. The floor is sampled in the same map state as x/y, before restoring
+any previous map selection. Floor zero is valid and distinct from unknown.
+Max health, max resource, and numeric resource type are written to a
 separate state stream on first observation and whenever the tuple changes.
 
 Coordinates come from the stock 3.3.5 `GetPlayerMapPosition` API, not world-space
@@ -521,12 +527,35 @@ Close the world map to permit current-zone selection; test outdoors to check
 whether the limitation is specific to an instance. SavedVariables are flushed
 to disk by WoW at logout or UI reload, not every sampling tick.
 
+### Experimental enemy-coordinate probe
+
+`/clog positions probe` prints raw `GetPlayerMapPosition` results for existing
+`player`, `target`, `focus`, `mouseover`, and `targettarget` unit tokens, together
+with GUID, hostility/player flags, API-call success, map ID, and dungeon level.
+This one-shot diagnostic does not require combat, logging, or bridge storage;
+it never changes map selection, starts a timer, or writes captured samples.
+An API-call success only means the call returned without an error, not that
+its coordinates are usable. Zeroes and API errors remain visible.
+
+The bundled stock FrameXML uses this API for player and group map markers, not
+arbitrary enemies. That does not prove native enemy-token behavior either way.
+To test on the actual client, select the current zone/floor manually and keep
+the map selection unchanged. First confirm the player baseline is usable.
+First target a friendly group member to test whether the `target` alias works
+for a known supported unit. Then target a hostile NPC and run the probe
+repeatedly while the NPC moves and the player remains stationary, then while
+the player moves and the NPC remains stationary. Try another enemy and repeat outdoors and in the desired instance.
+Zeroes, nils, or coordinates that merely mirror the player are not evidence of
+enemy positioning. Independent movement-correlated results are needed before
+adding enemy coordinates to stored telemetry. Even a successful target probe
+would not establish a way to enumerate every active enemy.
+
 ### Table shape
 
 ```lua
 position_payload = {
-    schema_version = 2,
-    encoding = "b36-v2",
+    schema_version = 3,
+    encoding = "b36-v3",
     guids = { "0x0000000000000001", "0x0000000000000002" },
     chunks = { "<encoded ticks>", "<encoded ticks>" },
     state_chunks = { "<encoded max/type changes>" },
@@ -535,7 +564,7 @@ position_payload = {
     tick_count = 120,
     position_count = 6000,
     state_count = 62,
-    encoded_bytes = 74500,
+    encoded_bytes = 74860,
     missing_positions = 0,
     skipped_positions = 0,
     skipped_ticks = 0,
@@ -548,21 +577,22 @@ at most 60 complete max/type records. They limit Lua string copying and
 SavedVariables table overhead; they are not upload batches. The uploader
 processes each array in order as one continuous stream.
 
-### `b36-v2` encoding
+### `b36-v3` encoding
 
 All numeric fields use lowercase base36.
 
 ```text
-<epochMs>:<mapId3>:<unit12><unit12>...;
+<epochMs>:<mapId3>:<floor2>:<unit12><unit12>...;
 ```
 
-Each per-tick unit sample is fixed-width:
+Each per-tick unit sample is fixed-width and unchanged from `b36-v2`:
 
 ```text
 <guidIndex2><x3><y3><healthPermille2><resourcePermille2>
 ```
 
-State changes use a separate semicolon-terminated stream:
+State changes are unchanged from `b36-v2` and use a separate
+semicolon-terminated stream:
 
 ```text
 <effectiveEpochMs>:<guidIndex2><healthMax5><resourceMax5><resourceType1>;
@@ -570,6 +600,9 @@ State changes use a separate semicolon-terminated stream:
 
 - `epochMs`: observation time in epoch milliseconds, variable-width base36.
 - `mapId3`: map area ID, left-padded to three base36 characters.
+- `floor2`: selected dungeon-map level, left-padded to two lowercase base36
+  characters; known integers 0 through 1,294 (`00` is valid zero). `zz` (1,295)
+  means unknown when the API is absent or its result is invalid or out of range.
 - `guidIndex2`: zero-based index into `guids`, left-padded to two characters.
 - `x3`, `y3`: normalized coordinates multiplied by 10,000 and rounded.
 - Percentage fields use permille values 0 through 1,000; `zz` means unknown.
@@ -577,7 +610,11 @@ State changes use a separate semicolon-terminated stream:
 - Resource type is the numeric `UnitPowerType` value; `z` means unknown.
 
 At 50 units sampled every second, the measured one-hour fixture is approximately
-2,212,500 encoded bytes (2.11 MiB) plus small SavedVariables syntax overhead.
+2,223,300 encoded bytes (2.12 MiB) plus small SavedVariables syntax overhead.
+For a nine-character epoch, a tick is `18 + 12 * unit_count` bytes: 618 bytes
+at 50 units, versus 615 in historical `b36-v2`. The new floor and colon add
+three bytes per tick, or 10,800 bytes across 3,600 ticks (historical fixture:
+2,212,500 bytes). See `POSITION_SPEC.md` for canonical vectors and validation.
 The store warns at 3 MiB and 3.5 MiB, then stops encoded data at 3.94 MiB. The
 remaining 64 KiB of the 4 MiB file budget is reserved for Lua SavedVariables
 syntax and metadata. A tick, new GUIDs, and its state changes are committed

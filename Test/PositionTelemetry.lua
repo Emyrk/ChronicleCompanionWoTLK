@@ -43,10 +43,11 @@ local function loadTelemetry(options)
         PositionStore = {
             Clear = function() return options.clearResult ~= false end,
             IsReady = function() return options.bridgeReady ~= false end,
-            AppendTick = function(_, timestamp, mapId, samples)
+            AppendTick = function(_, timestamp, mapId, samples, dungeonLevel)
                 appended[#appended + 1] = {
                     timestamp = timestamp,
                     mapId = mapId,
+                    dungeonLevel = dungeonLevel,
                     samples = samples,
                 }
                 return options.appendResult ~= false
@@ -116,6 +117,7 @@ add("capture stores one epoch for all visible group positions", function()
     T.equal(#appended, 1)
     T.equal(appended[1].timestamp, "1786244400123")
     T.equal(appended[1].mapId, 631)
+    T.equal(appended[1].dungeonLevel, 1)
     T.equal(#appended[1].samples, 2)
     T.equal(appended[1].samples[1].guid, "0x0000000000000001")
     T.equal(appended[1].samples[1].health_permille, 500)
@@ -319,6 +321,85 @@ add("failed clear leaves the running sampler alone", function()
     telemetry:Start()
     T.falsy(telemetry:ClearPositions())
     T.truthy(telemetry:IsActive())
+end)
+
+add("capture records the sampled floor before restoring the previous map selection", function()
+    local telemetry, appended = loadTelemetry({ positions = { player = { 0, 0 } } })
+    local floor = 3
+    local selected = false
+    _G.GetCurrentMapDungeonLevel = function() return floor end
+    _G.GetPlayerMapPosition = function()
+        if selected then return 0.25, 0.75 end
+        return 0, 0
+    end
+    _G.SetMapToCurrentZone = function() selected = true; floor = 2 end
+    _G.SetDungeonMapLevel = function(level) floor = level end
+    T.truthy(telemetry:CaptureOnce())
+    T.equal(appended[1].dungeonLevel, 2)
+    T.equal(telemetry:GetLastSample().dungeon_level, 2)
+    T.equal(floor, 3)
+end)
+
+add("capture passes floor zero and unavailable floor without defaulting to one", function()
+    local telemetry, appended = loadTelemetry()
+    _G.GetCurrentMapDungeonLevel = function() return 0 end
+    T.truthy(telemetry:CaptureOnce())
+    T.equal(appended[1].dungeonLevel, 0)
+    _G.GetCurrentMapDungeonLevel = nil
+    T.truthy(telemetry:CaptureOnce())
+    T.equal(appended[2].dungeonLevel, nil)
+end)
+
+add("enemy position probe keeps raw zeroes and never changes map or stored capture", function()
+    local telemetry, appended, _, scheduled, _, _, mapSetCalls = loadTelemetry({
+        enabled = false, bridgeReady = false, combat = false, logging = false,
+        positions = { player = { 0.25, 0.75 }, target = { 0, 0 } },
+    })
+    _G.UnitCanAttack = function(_, unit) return unit == "target" end
+    _G.UnitIsPlayer = function(unit) return unit == "player" end
+    _G.SetMapZoom = function() error("probe must not change map") end
+    _G.SetDungeonMapLevel = function() error("probe must not change floor") end
+    local result = telemetry:ProbeEnemyPositions()
+    T.equal(result.map_id, 631)
+    T.equal(result.dungeon_level, 1)
+    T.equal(#result.units, 2)
+    T.equal(result.units[1].unit, "player")
+    T.equal(result.units[2].unit, "target")
+    T.truthy(result.units[2].hostile)
+    T.falsy(result.units[2].is_player)
+    T.truthy(result.units[2].ok)
+    T.equal(result.units[2].x, 0)
+    T.equal(result.units[2].y, 0)
+    T.equal(#appended, 0)
+    T.equal(#scheduled, 0)
+    T.equal(mapSetCalls(), 0)
+    T.equal(telemetry:GetLastSample(), nil)
+end)
+
+add("enemy position probe reports API errors and continues checking accessible units", function()
+    local telemetry, _, _, _, _, warnings = loadTelemetry({
+        positions = { player = { 0.25, 0.75 }, target = { 0, 0 }, focus = { 0.4, 0.5 } },
+    })
+    _G.GetPlayerMapPosition = function(unit)
+        if unit == "target" then error("unsupported token") end
+        return 0.4, 0.5
+    end
+    local result = telemetry:ProbeEnemyPositions()
+    T.equal(#result.units, 3)
+    T.falsy(result.units[2].ok)
+    T.truthy(result.units[2].error:find("unsupported token", 1, true))
+    T.truthy(result.units[3].ok)
+    T.equal(result.units[3].x, 0.4)
+    T.equal(#warnings, 1)
+end)
+
+add("enemy position probe tolerates an unavailable coordinate API", function()
+    local telemetry = loadTelemetry()
+    _G.GetPlayerMapPosition = nil
+    local result = telemetry:ProbeEnemyPositions()
+    T.equal(#result.units, 1)
+    T.falsy(result.units[1].ok)
+    T.equal(result.units[1].error, "GetPlayerMapPosition unavailable")
 end)
 
 return cases

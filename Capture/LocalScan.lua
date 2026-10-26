@@ -445,6 +445,7 @@ local function slashHandler(msg)
         Log:Info("  /chron inspect    -- inspect tools (ui, gear, talents, ...)")
         Log:Info("  /clog relay       -- relay status and controls")
         Log:Info("  /clog positions   -- SavedVariables position capture status")
+        Log:Info("  /clog positions probe -- test raw enemy map coordinates without saving")
         Log:Info("  /clog positions clear -- clear captured positions (with confirmation)")
         Log:Info("  /clog log         -- logger settings")
         Log:Info("Type a command alone for its sub-help.")
@@ -539,13 +540,22 @@ local function slashHandler(msg)
         return
     end
 
-    -- ---- /clog positions [on|off|clear] ----
+    -- ---- /clog positions [on|off|clear|probe] ----
     if cmd == "positions" then
         local sub = tokens[2]
         local Store = Chronicle.PositionStore
         local Telemetry = Chronicle.PositionTelemetry
         if not Store then
             Log:Warn("Position store module not loaded")
+            return
+        end
+
+        if sub == "probe" then
+            if Telemetry then
+                Telemetry:ProbeEnemyPositions()
+            else
+                Log:Warn("Position telemetry module not loaded")
+            end
             return
         end
 
@@ -568,7 +578,7 @@ local function slashHandler(msg)
             Log:Info("Position capture %s", enabled and "enabled" or "disabled")
             return
         elseif sub then
-            Log:Info("Usage: /clog positions [on|off|clear]")
+            Log:Info("Usage: /clog positions [on|off|clear|probe]")
             return
         end
 

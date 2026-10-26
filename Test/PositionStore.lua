@@ -11,13 +11,15 @@ local function loadStore(overrides)
         C = {
             POSITION_BRIDGE_ADDON = "ChronicleSidekickBridgeWoTLK",
             POSITION_BRIDGE_STORAGE_VERSION = 1,
-            POSITION_SCHEMA_VERSION = 2,
+            POSITION_SCHEMA_VERSION = 3,
             POSITION_UNIT_MAX = 50,
             POSITION_GUID_INDEX_WIDTH = 2,
             POSITION_GUID_BYTE_MAX = 64,
             POSITION_COORD_SCALE = 10000,
             POSITION_COORD_WIDTH = 3,
             POSITION_MAP_WIDTH = 3,
+            POSITION_FLOOR_WIDTH = 2,
+            POSITION_FLOOR_UNKNOWN = 1295,
             POSITION_BLOCK_TICKS = 60,
             POSITION_VITAL_PERCENT_SCALE = 1000,
             POSITION_VITAL_PERCENT_WIDTH = 2,
@@ -79,8 +81,8 @@ end
 add("hydrate creates one account-wide payload without replacing other settings", function()
     local store, db = loadStore()
     T.equal(db.unrelated, "keep")
-    T.equal(db.position_payload.schema_version, 2)
-    T.equal(db.position_payload.encoding, "b36-v2")
+    T.equal(db.position_payload.schema_version, 3)
+    T.equal(db.position_payload.encoding, "b36-v3")
     T.equal(#db.position_payload.guids, 0)
     T.equal(#db.position_payload.chunks, 0)
     T.equal(#db.position_payload.state_chunks, 0)
@@ -98,7 +100,7 @@ add("append groups one epoch and map with dictionary-indexed positions", functio
     local payload = db.position_payload
     local util = Chronicle.Util
     local expected = util.ToBase36(1786244400123)
-        .. ":" .. util.ToBase36(631, 3) .. ":"
+        .. ":" .. util.ToBase36(631, 3) .. ":zz:"
         .. "00" .. util.ToBase36(1234, 3) .. util.ToBase36(5678, 3)
         .. util.ToBase36(1000, 2) .. util.ToBase36(1000, 2)
         .. "01" .. util.ToBase36(10000, 3) .. util.ToBase36(0, 3)
@@ -114,7 +116,7 @@ add("append groups one epoch and map with dictionary-indexed positions", functio
     T.equal(payload.position_count, 2)
 end)
 
-add("b36-v2 canonical tick and state vector matches the server contract", function()
+add("b36-v3 canonical tick and state vector matches the server contract", function()
     local store, db = loadStore()
     T.truthy(store:AppendTick("1786244400123", 631, {
         pos("0x0000000000000001", 0.1234, 0.5678, {
@@ -131,9 +133,9 @@ add("b36-v2 canonical tick and state vector matches the server contract", functi
             resource_max = 0,
             resource_type = 1,
         }),
-    }))
+    }, 1))
     T.equal(db.position_payload.chunks[1],
-        "msl7so3f:0hj:000ya4dqdw6y017ps000rszz;")
+        "msl7so3f:0hj:01:000ya4dqdw6y017ps000rszz;")
     T.equal(db.position_payload.state_chunks[1],
         "msl7so3f:0000n5c00ffk0;msl7so3f:01012kw000001;")
 end)
@@ -283,8 +285,7 @@ add("fifty units with percentage vitals stay near 2.2 MB per hour", function()
         T.truthy(store:AppendTick(tostring(1786244400000 + second * 1000), 631, positions))
     end
     local bytes = store:GetStatus().encoded_bytes
-    T.truthy(bytes > 2210000, "expected at least 2.21 MB")
-    T.truthy(bytes < 2230000, "expected less than 2.23 MB")
+    T.equal(bytes, 2223300, "floor header adds three bytes per tick")
 end)
 
 add("invalid or future payloads are preserved and block capture", function()
@@ -305,8 +306,8 @@ end)
 
 add("malformed chunk data is preserved and blocks capture", function()
     local malformed = {
-        schema_version = 2,
-        encoding = "b36-v2",
+        schema_version = 3,
+        encoding = "b36-v3",
         guids = {},
         chunks = { 42 },
         state_chunks = {},
@@ -321,10 +322,10 @@ end)
 
 add("malformed string tick data is preserved and blocks capture", function()
     local malformed = {
-        schema_version = 2,
-        encoding = "b36-v2",
+        schema_version = 3,
+        encoding = "b36-v3",
         guids = { "0x1" },
-        chunks = { "msl7so3f:0hj:000ya4dqdw6y" },
+        chunks = { "msl7so3f:0hj:01:000ya4dqdw6y" },
         state_chunks = {},
     }
     local store, db = loadStore({ db = { position_payload = malformed } })
@@ -334,10 +335,10 @@ end)
 
 add("out-of-range percentage samples block hydration", function()
     local malformed = {
-        schema_version = 2,
-        encoding = "b36-v2",
+        schema_version = 3,
+        encoding = "b36-v3",
         guids = { "0x1" },
-        chunks = { "msl7so3f:0hj:000ya4dqrt6y;" },
+        chunks = { "msl7so3f:0hj:01:000ya4dqrt6y;" },
         state_chunks = {},
     }
     local store = loadStore({ db = { position_payload = malformed } })
@@ -360,8 +361,8 @@ end)
 
 add("malformed vital state data is preserved and blocks capture", function()
     local malformed = {
-        schema_version = 2,
-        encoding = "b36-v2",
+        schema_version = 3,
+        encoding = "b36-v3",
         guids = {},
         chunks = {},
         state_chunks = { 42 },
@@ -374,8 +375,8 @@ end)
 
 add("malformed vital state strings block without hydrating diagnostics", function()
     local malformed = {
-        schema_version = 2,
-        encoding = "b36-v2",
+        schema_version = 3,
+        encoding = "b36-v3",
         guids = { "0x1" },
         chunks = {},
         state_chunks = { "not-a-complete-record" },
@@ -394,8 +395,8 @@ add("non-ASCII or oversized GUID dictionary entries block capture", function()
     }
     for i = 1, #invalidGuids do
         local malformed = {
-            schema_version = 2,
-            encoding = "b36-v2",
+            schema_version = 3,
+            encoding = "b36-v3",
             guids = { invalidGuids[i] },
             chunks = {},
             state_chunks = {},
@@ -418,8 +419,8 @@ end)
 
 add("duplicate GUID dictionary entries block capture without mutation", function()
     local duplicate = {
-        schema_version = 2,
-        encoding = "b36-v2",
+        schema_version = 3,
+        encoding = "b36-v3",
         guids = { "0x1", "0x1" },
         chunks = {},
         state_chunks = {},
@@ -433,8 +434,8 @@ add("oversized GUID dictionary blocks capture without mutation", function()
     local guids = {}
     for i = 1, 1297 do guids[i] = tostring(i) end
     local oversized = {
-        schema_version = 2,
-        encoding = "b36-v2",
+        schema_version = 3,
+        encoding = "b36-v3",
         guids = guids,
         chunks = {},
         state_chunks = {},
@@ -558,6 +559,57 @@ add("clear refuses absent or incompatible bridge without deleting data", functio
         T.falsy(store:Clear())
         T.equal(account.position_payload, legacy)
         T.equal(db.position_payload, nil)
+    end
+end)
+
+add("floor zero, multiple dungeon floors and unknown floor remain distinct after reload", function()
+    local store, db = loadStore()
+    local samples = { pos("0x1", 0.25, 0.75) }
+    for i, level in ipairs({ 0, 1, 2, 1294 }) do
+        T.truthy(store:AppendTick(tostring(1786244400000 + i), 537, samples, level))
+        T.contains(db.position_payload.chunks[1], ":0ex:" .. Chronicle.Util.ToBase36(level, 2) .. ":")
+    end
+    T.truthy(store:AppendTick("1786244400010", 537, samples))
+    T.contains(db.position_payload.chunks[1], ":0ex:zz:")
+    local before = db.position_payload.chunks[1]
+    local reloaded = loadStore({ db = db })
+    T.truthy(reloaded:IsReady())
+    T.equal(reloaded:GetStatus().tick_count, 5)
+    T.equal(db.position_payload.chunks[1], before)
+end)
+
+add("invalid dungeon levels encode as unknown rather than guessing a floor", function()
+    local store, db = loadStore()
+    local samples = { pos("0x1", 0.25, 0.75) }
+    for _, level in ipairs({ -1, 1.5, 1295, 1296, "invalid", math.huge, 0/0 }) do
+        T.truthy(store:AppendTick("1786244400000", 537, samples, level))
+    end
+    local _, unknownCount = db.position_payload.chunks[1]:gsub(":zz:", "")
+    T.equal(unknownCount, 7)
+end)
+
+add("v3 hydration rejects missing malformed or incorrectly sized floor headers", function()
+    for _, header in ipairs({ "", "0", "000", "0!", "01:02" }) do
+        local store, db = loadStore()
+        T.truthy(store:AppendTick("1786244400000", 537, { pos("0x1", 0.25, 0.75) }, 1))
+        db.position_payload.chunks[1] = db.position_payload.chunks[1]:gsub(":01:", ":" .. header .. ":", 1)
+        local before = db.position_payload.chunks[1]
+        local reloaded = loadStore({ db = db })
+        T.falsy(reloaded:IsReady())
+        T.equal(db.position_payload.chunks[1], before)
+        T.equal(reloaded:GetStatus().blocked_reason, "tick chunk contains malformed data")
+    end
+end)
+
+add("older position formats are preserved without assigning a guessed floor", function()
+    for _, version in ipairs({ 1, 2 }) do
+        local old = { schema_version = version, encoding = "b36-v" .. version,
+            guids = { "0x1" }, chunks = { "historical-data" } }
+        local store, db = loadStore({ db = { position_payload = old } })
+        T.falsy(store:IsReady())
+        T.equal(db.position_payload, old)
+        T.equal(old.chunks[1], "historical-data")
+        T.equal(store:GetStatus().blocked_reason, "unsupported schema version")
     end
 end)
 

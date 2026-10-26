@@ -115,10 +115,10 @@ local function restoreMap(continent, zone, dungeonLevel)
     end
 end
 
-local function recordSample(mapId, playerX, playerY, available, missing)
+local function recordSample(mapId, playerX, playerY, available, missing, dungeonLevel)
     lastSample = {
         map_id = mapId,
-        dungeon_level = api("GetCurrentMapDungeonLevel"),
+        dungeon_level = dungeonLevel,
         player_x = playerX,
         player_y = playerY,
         available = available,
@@ -139,18 +139,19 @@ local function collectPositions()
         -- Never sample a user-selected map as if it were the player's current
         -- coordinate space. Wait until the world map is hidden instead.
         if mapFrameIsVisible() or type(SetMapToCurrentZone) ~= "function" then
-            recordSample(0, playerX, playerY, 0, #units)
+            recordSample(0, playerX, playerY, 0, #units, api("GetCurrentMapDungeonLevel"))
             return 0, {}, #units
         end
         local ok = pcall(SetMapToCurrentZone)
         if not ok then
-            recordSample(0, playerX, playerY, 0, #units)
+            recordSample(0, playerX, playerY, 0, #units, api("GetCurrentMapDungeonLevel"))
             return 0, {}, #units
         end
         changedMap = true
     end
 
     local mapId = tonumber(api("GetCurrentMapAreaID")) or 0
+    local dungeonLevel = api("GetCurrentMapDungeonLevel")
     -- Diagnostics must describe the sampled map, before the old map is restored.
     playerX, playerY = api("GetPlayerMapPosition", "player")
     local positions = {}
@@ -165,11 +166,11 @@ local function collectPositions()
         end
     end
 
-    recordSample(mapId, playerX, playerY, #positions, missing)
+    recordSample(mapId, playerX, playerY, #positions, missing, dungeonLevel)
     if changedMap then
         restoreMap(oldContinent, oldZone, oldDungeonLevel)
     end
-    return mapId, positions, missing
+    return mapId, positions, missing, dungeonLevel
 end
 
 local function scheduleNext(token)
@@ -194,7 +195,7 @@ end
 function Telemetry:CaptureOnce()
     if not shouldCapture() then return false end
 
-    local mapId, positions, missing = collectPositions()
+    local mapId, positions, missing, dungeonLevel = collectPositions()
     if missing > 0 then
         Store:RecordMissing(missing)
         local status = Store:GetStatus()
@@ -210,7 +211,7 @@ function Telemetry:CaptureOnce()
     end
     if #positions == 0 then return false end
 
-    return Store:AppendTick(Util.TimestampMs(), mapId, positions)
+    return Store:AppendTick(Util.TimestampMs(), mapId, positions, dungeonLevel)
 end
 
 --- Start the single recurring combat sampler.
@@ -247,6 +248,53 @@ end
 -- @treturn boolean
 function Telemetry:IsActive()
     return active
+end
+
+--- Probe raw map-coordinate support for accessible units without storing samples.
+-- The engine's handling of non-player tokens is not specified by FrameXML.
+-- Keep raw zeroes/errors visible so a live test cannot mistake them for evidence
+-- of working enemy positions. Never change the map selection during this probe.
+-- @treturn table map context and per-unit raw API results
+function Telemetry:ProbeEnemyPositions()
+    local result = {
+        map_id = api("GetCurrentMapAreaID"),
+        dungeon_level = api("GetCurrentMapDungeonLevel"),
+        map_visible = mapFrameIsVisible(),
+        units = {},
+    }
+    Log:Info("Position probe: map=%s floor=%s mapVisible=%s (no map changes or saved samples)",
+        tostring(result.map_id), tostring(result.dungeon_level), tostring(result.map_visible))
+    local units = { "player", "target", "focus", "mouseover", "targettarget" }
+    for _, unit in ipairs(units) do
+        if api("UnitExists", unit) then
+            local sample = {
+                unit = unit,
+                guid = api("UnitGUID", unit),
+                hostile = api("UnitCanAttack", "player", unit),
+                is_player = api("UnitIsPlayer", unit),
+            }
+            if type(GetPlayerMapPosition) == "function" then
+                local ok, x, y = pcall(GetPlayerMapPosition, unit)
+                sample.ok = ok
+                if ok then
+                    sample.x, sample.y = x, y
+                else
+                    sample.error = tostring(x)
+                    Log:Warn("Position probe: GetPlayerMapPosition(%s) failed: %s", unit, sample.error)
+                end
+            else
+                sample.ok = false
+                sample.error = "GetPlayerMapPosition unavailable"
+                Log:Warn("Position probe: %s", sample.error)
+            end
+            result.units[#result.units + 1] = sample
+            Log:Info("  %s guid=%s hostile=%s player=%s ok=%s x=%s y=%s",
+                unit, tostring(sample.guid), tostring(sample.hostile), tostring(sample.is_player),
+                tostring(sample.ok), tostring(sample.x), tostring(sample.y))
+        end
+    end
+    Log:Info("Raw results only: compare a moving enemy against a stationary player before trusting coordinates")
+    return result
 end
 
 --- Return diagnostics for the last attempted tick, without changing the map.

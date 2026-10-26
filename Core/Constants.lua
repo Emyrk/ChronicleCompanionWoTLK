@@ -88,7 +88,7 @@ Chronicle.C = {
     -- -----------------------------------------------------------------
     POSITION_BRIDGE_ADDON          = "ChronicleSidekickBridgeWoTLK",
     POSITION_BRIDGE_STORAGE_VERSION = 1,
-    POSITION_SCHEMA_VERSION        = 2,
+    POSITION_SCHEMA_VERSION        = 3,
     POSITION_SAMPLE_INTERVAL_SEC   = 1,
     POSITION_UNIT_MAX              = 50,
     POSITION_BLOCK_TICKS           = 60,
@@ -99,6 +99,8 @@ Chronicle.C = {
     POSITION_COORD_SCALE           = 10000,
     POSITION_COORD_WIDTH           = 3,
     POSITION_MAP_WIDTH             = 3,
+    POSITION_FLOOR_WIDTH           = 2,
+    POSITION_FLOOR_UNKNOWN         = 1295,     -- "zz"; zero is a valid map level
     POSITION_VITAL_PERCENT_SCALE   = 1000,     -- 0.1% resolution
     POSITION_VITAL_PERCENT_WIDTH   = 2,
     POSITION_VITAL_PERCENT_UNKNOWN = 1295,     -- "zz"

@@ -21,7 +21,7 @@ local vitalStateByGuid = {}
 local function newPayload()
     return {
         schema_version = C.POSITION_SCHEMA_VERSION,
-        encoding = "b36-v2",
+        encoding = "b36-v3",
         guids = {},
         chunks = {},
         state_chunks = {},
@@ -173,18 +173,25 @@ local function rebuildTickStats()
             local firstSeparator = tick:find(":", 1, true)
             local secondSeparator = firstSeparator
                 and tick:find(":", firstSeparator + 1, true)
+            local thirdSeparator = secondSeparator
+                and tick:find(":", secondSeparator + 1, true)
             if not firstSeparator or firstSeparator == 1
                 or not secondSeparator
                 or secondSeparator - firstSeparator - 1 ~= C.POSITION_MAP_WIDTH
-                or tick:find(":", secondSeparator + 1, true)
+                or not thirdSeparator
+                or thirdSeparator - secondSeparator - 1 ~= C.POSITION_FLOOR_WIDTH
+                or tick:find(":", thirdSeparator + 1, true)
             then
                 return false, "tick chunk contains malformed data"
             end
 
             local timestamp = Util.FromBase36(tick:sub(1, firstSeparator - 1))
             local mapId = Util.FromBase36(tick:sub(firstSeparator + 1, secondSeparator - 1))
-            local records = tick:sub(secondSeparator + 1)
-            if not timestamp or timestamp <= 0 or mapId == nil or records == ""
+            local dungeonLevel = Util.FromBase36(tick:sub(secondSeparator + 1, thirdSeparator - 1))
+            local records = tick:sub(thirdSeparator + 1)
+            if not timestamp or timestamp <= 0 or mapId == nil
+                or dungeonLevel == nil or dungeonLevel > C.POSITION_FLOOR_UNKNOWN
+                or records == ""
                 or #records % recordWidth ~= 0
             then
                 return false, "tick chunk contains malformed data"
@@ -359,7 +366,7 @@ function Store:Hydrate()
         return blockCapture("position_payload is not a table")
     elseif candidate.schema_version ~= C.POSITION_SCHEMA_VERSION then
         return blockCapture("unsupported schema version")
-    elseif candidate.encoding ~= "b36-v2" then
+    elseif candidate.encoding ~= "b36-v3" then
         return blockCapture("unsupported encoding")
     elseif type(candidate.guids) ~= "table" then
         return blockCapture("GUID dictionary is not a table")
@@ -457,8 +464,9 @@ end
 -- @tparam string timestampMs epoch milliseconds
 -- @tparam number mapId current map area ID, or zero when unavailable
 -- @tparam table positions unit samples with GUID, coordinates, and vital fields
+-- @tparam[opt] number dungeonLevel selected dungeon-map level; nil means unknown
 -- @treturn boolean true when the complete tick and its state changes were appended
-function Store:AppendTick(timestampMs, mapId, positions)
+function Store:AppendTick(timestampMs, mapId, positions, dungeonLevel)
     if not payload and not self:Hydrate() then return false end
     if payload.capped then
         payload.skipped_ticks = payload.skipped_ticks + 1
@@ -472,6 +480,10 @@ function Store:AppendTick(timestampMs, mapId, positions)
     local timestampText = Util.ToBase36(timestamp)
     local encodedMap = fixedBase36(math.max(tonumber(mapId) or 0, 0), C.POSITION_MAP_WIDTH)
     if not encodedMap then encodedMap = string.rep("0", C.POSITION_MAP_WIDTH) end
+    local floor = tonumber(dungeonLevel)
+    if floor and floor ~= math.floor(floor) then floor = nil end
+    local encodedFloor = encodedOrUnknown(floor, C.POSITION_FLOOR_WIDTH,
+        C.POSITION_FLOOR_UNKNOWN - 1, C.POSITION_FLOOR_UNKNOWN)
 
     local records = {}
     local stateRecords = {}
@@ -528,7 +540,7 @@ function Store:AppendTick(timestampMs, mapId, positions)
 
     if #records == 0 then return false end
 
-    local tick = timestampText .. ":" .. encodedMap .. ":"
+    local tick = timestampText .. ":" .. encodedMap .. ":" .. encodedFloor .. ":"
         .. table.concat(records) .. ";"
     local addedBytes = #tick
     for i = 1, #stateRecords do addedBytes = addedBytes + #stateRecords[i] end

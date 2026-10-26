@@ -1,6 +1,6 @@
 # Position and Vital Telemetry Upload Specification
 
-Status: normative for SavedVariables schema version 2 and encoding `b36-v2`.
+Status: normative for SavedVariables schema version 3 and encoding `b36-v3`.
 
 This document defines how the Chronicle desktop uploader and server consume the
 position and vital streams written by ChronicleCompanionWoTLK. It does not
@@ -52,9 +52,11 @@ WTF/Account/<account>/SavedVariables/ChronicleSidekickBridgeWoTLK.lua
 The exact multipart field names and authentication scheme remain outside this
 specification.
 
-Schema version 2 is not an in-place reinterpretation of version 1. An existing
-`b36-v1` payload is preserved and blocks new capture until compatible tooling
-uploads or explicitly clears it.
+Schema version 3 is not an in-place reinterpretation of versions 1 or 2. Existing
+`b36-v1` and `b36-v2` payloads are preserved unchanged and block new capture until
+compatible tooling uploads them or the user explicitly clears them. Historical
+`b36-v2` ticks have no floor field; neither older format may be migrated by
+guessing floors or reinterpreted as `b36-v3`.
 
 ## 2. Capture semantics
 
@@ -75,6 +77,7 @@ Logical tick fields are:
 ```text
 observed_at_ms
 map_id
+floor
 guid
 x
 y
@@ -86,13 +89,18 @@ resource_permille
   load plus monotonic `GetTime()` elapsed time. Later wall-clock adjustments are
   intentionally not reflected within that addon run.
 - `map_id` is the WotLK map area ID. Zero means unknown.
+- `floor` is the selected dungeon-map level, sampled in the same map state as
+  `x` and `y`. Known integer levels are 0 through 1,294. Zero is valid and
+  distinct from unknown; an absent API, invalid result, or out-of-range result
+  is unknown. The floor is shared by all unit samples in the tick.
 - `guid` is the full opaque WoW unit GUID string.
 - `x` and `y` are normalized map coordinates in the inclusive range 0 through 1.
 - `health_permille` and `resource_permille` are rounded to 0 through 1,000.
   Each step represents 0.1 percent. The reserved value 1,295 means unknown.
 
 Map ID is required because normalized coordinates are meaningful only within the
-map coordinate space where they were observed.
+map coordinate space where they were observed. The floor distinguishes levels
+within that map; unknown floor must not be treated as level zero.
 
 A unit is omitted from a tick when its GUID or map coordinates are unavailable.
 The addon treats `0,0` returned by `GetPlayerMapPosition` as unavailable rather
@@ -102,7 +110,9 @@ omit an otherwise valid position; the affected percentage is encoded as unknown.
 If the player's position is unavailable while the world map is visible, the
 addon skips the entire tick rather than risk recording coordinates from a map
 the user is browsing. When the map is hidden, the addon may temporarily select
-the current zone, collect the tick, and restore the previous map state.
+the current zone, collect the map ID, selected dungeon-map level, and coordinates
+in that same map state, and restore the previous map state. Sample the floor
+before restoration, not from the restored browsing state.
 
 Max health, max resource, and resource type are stored in a separate state
 stream. A state record is emitted on the first encoded observation of a GUID and
@@ -113,8 +123,8 @@ explicitly, so a transition between known and unknown state is also a change.
 
 ```lua
 position_payload = {
-    schema_version = 2,
-    encoding = "b36-v2",
+    schema_version = 3,
+    encoding = "b36-v3",
     guids = {
         "0x0000000000000001",
         "0x0000000000000002",
@@ -131,7 +141,7 @@ position_payload = {
     tick_count = 120,
     position_count = 6000,
     state_count = 62,
-    encoded_bytes = 74500,
+    encoded_bytes = 74860,
     missing_positions = 0,
     skipped_positions = 0,
     skipped_ticks = 0,
@@ -146,8 +156,8 @@ position_payload = {
 
 | Field | Type | Meaning |
 |---|---|---|
-| `schema_version` | integer | Must equal `2`. |
-| `encoding` | string | Must equal `b36-v2`. |
+| `schema_version` | integer | Must equal `3`. |
+| `encoding` | string | Must equal `b36-v3`. |
 | `guids` | array of strings | Zero-based GUID dictionary; Lua array element 1 is wire index 0. |
 | `chunks` | array of strings | Ordered encoded tick blocks. |
 | `state_chunks` | array of strings | Ordered max-health, max-resource, and resource-type state blocks. |
@@ -197,6 +207,7 @@ Reserved unknown values are:
 
 | Logical field | Encoded | Decoded |
 |---|---|---:|
+| floor | `zz` | 1,295 |
 | health/resource permille | `zz` | 1,295 |
 | max health/resource | `zzzzz` | 60,466,175 |
 | resource type | `z` | 35 |
@@ -213,9 +224,10 @@ A tick chunk is one or more complete ticks concatenated together:
 
 ```text
 chunk             = tick *tick
-tick              = epoch ":" map-id ":" 1*50(unit-sample) ";"
+tick              = epoch ":" map-id ":" floor ":" 1*50(unit-sample) ";"
 epoch             = 1*base36
 map-id            = 3base36
+floor             = 2base36
 unit-sample       = guid-index x-fixed y-fixed health-pct resource-pct
 guid-index        = 2base36
 x-fixed           = 3base36
@@ -228,10 +240,13 @@ base36            = DIGIT / %x61-7A
 In practical parser terms:
 
 ```text
-<epochMs>:<mapId3>:<unit12><unit12>...;
+<epochMs>:<mapId3>:<floor2>:<unit12><unit12>...;
 ```
 
-Each unit sample is exactly 12 characters:
+The floor is exactly two lowercase base36 characters, left-padded with zeroes.
+`00` is known floor zero, `01` is floor one, and `zz` is unknown.
+
+Each unit sample is exactly 12 characters (unchanged from `b36-v2`):
 
 ```text
 <guidIndex2><x3><y3><healthPermille2><resourcePermille2>
@@ -243,6 +258,7 @@ Field widths and decoded ranges:
 |---|---:|---:|
 | `epochMs` | variable | Positive epoch milliseconds |
 | `mapId3` | 3 | 0 through 46,655; zero is unknown |
+| `floor2` | 2 | 0 through 1,294 known; 1,295 is unknown |
 | `guidIndex2` | 2 | 0 through 1,295 |
 | `x3` | 3 | 0 through 10,000 |
 | `y3` | 3 | 0 through 10,000 |
@@ -262,7 +278,8 @@ Do not apply those percentage formulas to the unknown sentinel.
 
 ## 6. Vital state stream grammar
 
-A state chunk is one or more complete state records concatenated together:
+The vital unit fields and this separate state stream are unchanged from
+`b36-v2`. A state chunk is one or more complete state records concatenated together:
 
 ```text
 state-chunk       = state-record *state-record
@@ -307,6 +324,7 @@ Logical tick:
 ```text
 observed_at_ms = 1786244400123
 map_id         = 631
+floor          = 1
 unit 0         = index 0, x=0.1234, y=0.5678, health=500, resource=250
 unit 1         = index 1, x=1.0000, y=0.0000, health=1000, resource=unknown
 ```
@@ -323,6 +341,7 @@ Selected base36 values:
 ```text
 1786244400123 -> msl7so3f
 631           -> 0hj
+1 (floor)     -> 01
 1234          -> 0ya
 5678          -> 4dq
 500           -> dw
@@ -337,7 +356,7 @@ unknown pct   -> zz
 Encoded tick:
 
 ```text
-msl7so3f:0hj:000ya4dqdw6y017ps000rszz;
+msl7so3f:0hj:01:000ya4dqdw6y017ps000rszz;
 ```
 
 Encoded state chunk:
@@ -353,6 +372,7 @@ Decoded unit samples:
   {
     "observed_at_ms": 1786244400123,
     "map_id": 631,
+    "floor": 1,
     "guid": "0x0000000000000001",
     "x": 0.1234,
     "y": 0.5678,
@@ -365,6 +385,7 @@ Decoded unit samples:
   {
     "observed_at_ms": 1786244400123,
     "map_id": 631,
+    "floor": 1,
     "guid": "0x0000000000000002",
     "x": 1.0,
     "y": 0.0,
@@ -394,8 +415,10 @@ for each tick chunk in chunks, preserving array order:
     require 1 through 60 ticks in the chunk
 
     for each tick:
-        split at the first and second colon
-        decode epoch and three-character map ID
+        require exactly three colons and split epoch, map ID, floor, and unit bytes
+        decode epoch, three-character map ID, and two-character floor
+        require floor is 0..1294 or exactly 1295 (unknown)
+        retain floor zero as known; represent unknown as null, not zero
         require unit bytes are a non-zero multiple of 12
         require 1 through 50 unit samples
 
@@ -409,7 +432,8 @@ for each tick chunk in chunks, preserving array order:
             require x and y are at most 10000
             require each permille is 0..1000 or the unknown sentinel
 
-            emit the sample with the current state_by_guid tuple, if any
+            emit the sample with the tick map ID and floor (null if unknown),
+            and the current state_by_guid tuple, if any
 ```
 
 Decode the state stream independently:
@@ -436,8 +460,8 @@ Validate before or during decoding:
 
 | Limit | Requirement |
 |---|---|
-| Schema | `schema_version == 2` |
-| Encoding | `encoding == "b36-v2"` |
+| Schema | `schema_version == 3` |
+| Encoding | `encoding == "b36-v3"` |
 | GUID count | 0 through 1,296 |
 | GUID uniqueness | Every dictionary string must be unique |
 | GUID representation | Non-empty ASCII string, maximum 64 bytes; treat as opaque |
@@ -445,6 +469,7 @@ Validate before or during decoding:
 | Ticks per tick chunk | 1 through 60 |
 | Records per state chunk | 1 through 60 |
 | Unit samples per tick | 1 through 50 |
+| Floor | Exactly two lowercase base36 characters; 0 through 1,294 known, or exactly 1,295 unknown |
 | Coordinate values | 0 through 10,000 inclusive |
 | Percentage values | 0 through 1,000, or exactly 1,295 |
 | Maximum values | 0 through 60,466,174, or exactly 60,466,175 |
@@ -492,6 +517,7 @@ missing_positions > 0
 skipped_positions > 0
 skipped_ticks > 0
 map_id == 0
+unknown floor sentinel (not floor zero)
 unknown percentage or state sentinels
 ```
 
@@ -506,7 +532,7 @@ files were deleted. The server must make the combined upload idempotent.
 A recommended deterministic telemetry digest is SHA-256 over the following byte
 sequence, written in order:
 
-1. ASCII `position-b36-v2`, then byte `0x0A`.
+1. ASCII `position-b36-v3`, then byte `0x0A`.
 2. ASCII decimal GUID count, then byte `0x0A`.
 3. For each GUID in dictionary order: ASCII decimal byte length, ASCII `:`, the
    exact GUID bytes, then byte `0x0A`.
@@ -517,7 +543,7 @@ sequence, written in order:
 7. For each state chunk in array order: ASCII decimal byte length, ASCII `:`, the
    exact chunk bytes, then byte `0x0A`.
 
-Lengths are byte counts, not Unicode code-point counts. Schema version 2 permits
+Lengths are byte counts, not Unicode code-point counts. Schema version 3 permits
 only ASCII GUIDs and chunks, so the values are identical in a conforming payload.
 
 A combined upload idempotency key may be:
@@ -540,7 +566,8 @@ Associate them by reconstructed combat-log time, map context, and GUID:
 2. Match ticks to encounters whose time window contains `observed_at_ms`, using
    a small implementation-defined tolerance for clock-anchor and log-timestamp
    precision differences.
-3. Use `map_id` as a consistency check and partition key when available.
+3. Use `map_id` and known `floor` as map-context consistency checks and partition
+   keys when available. Keep unknown floor distinct from known floor zero.
 4. Join `guid` to combatants using case-insensitive opaque-string comparison.
 5. Apply state changes to same-GUID samples before deriving any approximate
    absolute vital values.
@@ -575,9 +602,16 @@ The measured 50-unit, one-hour fixture with unchanged max/type state contains:
 3,600 ticks
 180,000 unit samples
 50 initial state records
-approximately 2,212,500 encoded bytes
-approximately 2.11 MiB before Lua SavedVariables syntax
+2,223,300 encoded bytes
+approximately 2.12 MiB before Lua SavedVariables syntax
 ```
+
+In general, tick size is `length(epochMs) + 9 + 12 * unit_count` bytes.
+For a nine-character epoch, tick size is `18 + 12 * unit_count` bytes: 618
+bytes at 50 units. The floor field and its colon add three bytes per tick over
+historical `b36-v2` (615 bytes at 50 units), or 10,800 bytes over 3,600 ticks.
+The fixture total grows from historical `b36-v2`'s 2,212,500 bytes by
+`3600 * 3 = 10,800` bytes to 2,223,300 bytes; GUID and state bytes are unchanged.
 
 Additional state records are small and occur only when a unit's max health, max
 resource, or resource type changes.
@@ -587,6 +621,8 @@ resource, or resource type changes.
 A server implementation is conformant when it:
 
 - Accepts both canonical encoded streams.
+- Preserves known floor zero and unknown floor distinctly, without guessing
+  floors for historical `b36-v1` or `b36-v2` payloads.
 - Resolves GUID indexes with Lua-array index offset `+1`.
 - Preserves tick-stream and state-stream order.
 - Rejects invalid base36, field widths, indexes, duplicate tick indexes,
