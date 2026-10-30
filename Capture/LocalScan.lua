@@ -444,6 +444,9 @@ local function slashHandler(msg)
         Log:Info("  /clog             -- open settings")
         Log:Info("  /chron inspect    -- inspect tools (ui, gear, talents, ...)")
         Log:Info("  /clog relay       -- relay status and controls")
+        Log:Info("  /clog positions   -- SavedVariables position capture status")
+        Log:Info("  /clog positions probe -- test raw enemy map coordinates without saving")
+        Log:Info("  /clog positions clear -- clear captured positions (with confirmation)")
         Log:Info("  /clog log         -- logger settings")
         Log:Info("Type a command alone for its sub-help.")
         return
@@ -534,6 +537,90 @@ local function slashHandler(msg)
 
         -- Unknown log sub-command
         Log:Info("Usage: /clog log [set-lvl <level> | set-window <window>]")
+        return
+    end
+
+    -- ---- /clog positions [on|off|clear|probe] ----
+    if cmd == "positions" then
+        local sub = tokens[2]
+        local Store = Chronicle.PositionStore
+        local Telemetry = Chronicle.PositionTelemetry
+        if not Store then
+            Log:Warn("Position store module not loaded")
+            return
+        end
+
+        if sub == "probe" then
+            if Telemetry then
+                Telemetry:ProbeEnemyPositions()
+            else
+                Log:Warn("Position telemetry module not loaded")
+            end
+            return
+        end
+
+        if sub == "clear" then
+            Chronicle.ConfirmClearPositions()
+            return
+        end
+
+        if sub == "on" or sub == "off" then
+            local enabled = sub == "on"
+            Chronicle.Config:Set("position_telemetry_enabled", enabled)
+            if Telemetry then
+                local ok, inCombat = pcall(UnitAffectingCombat, "player")
+                if enabled and ok and inCombat then
+                    Telemetry:Start()
+                elseif not enabled then
+                    Telemetry:Stop()
+                end
+            end
+            Log:Info("Position capture %s", enabled and "enabled" or "disabled")
+            return
+        elseif sub then
+            Log:Info("Usage: /clog positions [on|off|clear|probe]")
+            return
+        end
+
+        local status = Store:GetStatus()
+        local enabled = Chronicle.Config:Get("position_telemetry_enabled", true)
+        local percent = 0
+        if status.max_bytes and status.max_bytes > 0 then
+            percent = math.floor(status.encoded_bytes * 100 / status.max_bytes + 0.5)
+        end
+        local sampler = Telemetry and Telemetry:IsActive() and "active" or "idle"
+        if status.capped then sampler = "capped" end
+        if status.blocked_reason then sampler = "blocked" end
+
+        Log:Info("Positions: %s, sampler=%s", enabled and "enabled" or "disabled", sampler)
+        if status.blocked_reason then
+            Log:Warn("  Capture blocked: %s", status.blocked_reason)
+        end
+        Log:Info("  Data: %.2f MiB / %.2f MiB (%d%%)",
+            status.encoded_bytes / 1048576, status.max_bytes / 1048576, percent)
+        Log:Info("  Ticks: %d  |  Unit samples: %d  |  GUIDs: %d",
+            status.tick_count or 0, status.position_count or 0, status.guid_count or 0)
+        Log:Info("  State changes: %d  |  Tick blocks: %d  |  State blocks: %d",
+            status.state_count or 0, status.chunk_count or 0,
+            status.state_chunk_count or 0)
+        Log:Info("  Missing: %d  |  Skipped positions: %d  |  Skipped ticks: %d",
+            status.missing_positions or 0, status.skipped_positions or 0,
+            status.skipped_ticks or 0)
+        local sample = Telemetry and Telemetry:GetLastSample()
+        if sample then
+            Log:Info("  Last sample: map=%s floor=%s player=(%s, %s) available=%d missing=%d",
+                tostring(sample.map_id), tostring(sample.dungeon_level),
+                tostring(sample.player_x), tostring(sample.player_y), sample.available, sample.missing)
+            if sample.available == 0 then
+                Log:Warn("  Last sample had no usable coordinates; no position tick was saved")
+                if sample.map_visible then
+                    Log:Info("  Close the world map to allow current-zone map selection")
+                else
+                    Log:Info("  If this persists, test outdoors; this instance may not expose map positions")
+                end
+            end
+        end
+        Log:Info("  Desktop reset: delete ChronicleSidekickBridgeWoTLKDB.position_payload after upload")
         return
     end
 

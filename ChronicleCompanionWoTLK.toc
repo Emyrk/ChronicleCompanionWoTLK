@@ -3,6 +3,7 @@
 ## Notes: Companion addon for ChronicleClassic.com - WotLK 3.3.5a
 ## Version: 0.8
 ## DefaultState: enabled
+## OptionalDeps: ChronicleSidekickBridgeWoTLK
 ## Author: Emyrk
 ## SavedVariables: ChronicleCompanionWoTLKDB
 ## SavedVariablesPerCharacter: ChronicleCompanionWoTLKCharDB
@@ -12,6 +13,7 @@ Core\Constants.lua
 Core\Logger.lua
 Core\Config.lua
 Core\Util.lua
+Core\PositionStore.lua
 
 Capture\GearScan.lua
 Capture\TalentScan.lua
@@ -20,6 +22,7 @@ Capture\CIFormat.lua
 Capture\VehicleTracker.lua
 Capture\VehicleInspect.lua
 Capture\LocalScan.lua
+Capture\PositionTelemetry.lua
 
 Transport\Relay.lua
 

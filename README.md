@@ -25,6 +25,11 @@ Upload your logs at **[chronicleclassic.com](https://chronicleclassic.com/?utm_s
 3. Ensure the folder is named `ChronicleCompanionWoTLK`
 4. Restart WoW
 
+Position capture also requires
+[ChronicleSidekickBridgeWoTLK](https://github.com/Emyrk/ChronicleSidekickBridgeWoTLK)
+installed alongside this addon. Without it, position tracking stays off; other
+features still work. See [position storage details](SPEC.md#savedvariables-position-payload).
+
 ## Contributing
 
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.

@@ -79,6 +79,41 @@ Chronicle.C = {
     VEHICLE_INSPECT_DUMP_MAX    = 40,
 
     -- -----------------------------------------------------------------
+    -- Position telemetry SavedVariables
+    --
+    -- Positions and percentage vitals are captured once per second only while
+    -- both combat logging and player combat are active. Max health, max power,
+    -- and power type are emitted separately on first observation and change.
+    -- Fifty units for one continuous hour are about 2.2 MiB encoded.
+    -- -----------------------------------------------------------------
+    POSITION_BRIDGE_ADDON          = "ChronicleSidekickBridgeWoTLK",
+    POSITION_BRIDGE_STORAGE_VERSION = 1,
+    POSITION_SCHEMA_VERSION        = 3,
+    POSITION_SAMPLE_INTERVAL_SEC   = 1,
+    POSITION_UNIT_MAX              = 50,
+    POSITION_BLOCK_TICKS           = 60,
+    POSITION_STATE_BLOCK_RECORDS   = 60,
+    POSITION_GUID_INDEX_WIDTH      = 2,
+    POSITION_GUID_MAX              = 1296,     -- 36^2 dictionary entries
+    POSITION_GUID_BYTE_MAX         = 64,
+    POSITION_COORD_SCALE           = 10000,
+    POSITION_COORD_WIDTH           = 3,
+    POSITION_MAP_WIDTH             = 3,
+    POSITION_FLOOR_WIDTH           = 2,
+    POSITION_FLOOR_UNKNOWN         = 1295,     -- "zz"; zero is a valid map level
+    POSITION_VITAL_PERCENT_SCALE   = 1000,     -- 0.1% resolution
+    POSITION_VITAL_PERCENT_WIDTH   = 2,
+    POSITION_VITAL_PERCENT_UNKNOWN = 1295,     -- "zz"
+    POSITION_VITAL_MAX_WIDTH       = 5,
+    POSITION_VITAL_MAX_UNKNOWN     = 60466175, -- "zzzzz"
+    POSITION_POWER_TYPE_WIDTH      = 1,
+    POSITION_POWER_TYPE_UNKNOWN    = 35,       -- "z"
+    POSITION_STORE_WARN_BYTES      = 8388608,  -- 8 MiB
+    POSITION_STORE_CRITICAL_BYTES  = 9437184,  -- 9 MiB
+    POSITION_STORE_MAX_BYTES       = 10420224, -- 10 MiB file budget less 64 KiB syntax margin
+    POSITION_MISSING_WARN_SAMPLES  = 10,
+
+    -- -----------------------------------------------------------------
     -- SPELL_FAILED_* globals to hijack
     --
     -- 44 globals.  The engine
