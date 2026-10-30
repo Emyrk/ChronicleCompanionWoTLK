@@ -615,7 +615,8 @@ For a nine-character epoch, a tick is `18 + 12 * unit_count` bytes: 618 bytes
 at 50 units, versus 615 in historical `b36-v2`. The new floor and colon add
 three bytes per tick, or 10,800 bytes across 3,600 ticks (historical fixture:
 2,212,500 bytes). See `POSITION_SPEC.md` for canonical vectors and validation.
-The store warns at 3 MiB and 3.5 MiB, then stops encoded data at 3.94 MiB. The
-remaining 64 KiB of the 4 MiB file budget is reserved for Lua SavedVariables
+The store warns at 8 MiB and 9 MiB, then stops encoded data at 9.94 MiB. The
+remaining 64 KiB of the 10 MiB file budget is reserved for Lua SavedVariables
 syntax and metadata. A tick, new GUIDs, and its state changes are committed
-atomically; previously captured data is never deleted.
+atomically; after the cap is reached, no more telemetry is appended and
+previously captured data is never deleted.

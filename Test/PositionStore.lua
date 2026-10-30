@@ -78,6 +78,14 @@ local function pos(guid, x, y, vitals)
     }
 end
 
+add("production telemetry storage stops within a ten MiB file budget", function()
+    _G.Chronicle = {}
+    dofile("Core/Constants.lua")
+    T.equal(Chronicle.C.POSITION_STORE_WARN_BYTES, 8 * 1024 * 1024)
+    T.equal(Chronicle.C.POSITION_STORE_CRITICAL_BYTES, 9 * 1024 * 1024)
+    T.equal(Chronicle.C.POSITION_STORE_MAX_BYTES, 10 * 1024 * 1024 - 64 * 1024)
+end)
+
 add("hydrate creates one account-wide payload without replacing other settings", function()
     local store, db = loadStore()
     T.equal(db.unrelated, "keep")

@@ -108,9 +108,9 @@ Chronicle.C = {
     POSITION_VITAL_MAX_UNKNOWN     = 60466175, -- "zzzzz"
     POSITION_POWER_TYPE_WIDTH      = 1,
     POSITION_POWER_TYPE_UNKNOWN    = 35,       -- "z"
-    POSITION_STORE_WARN_BYTES      = 3145728, -- 3 MiB
-    POSITION_STORE_CRITICAL_BYTES  = 3670016, -- 3.5 MiB
-    POSITION_STORE_MAX_BYTES       = 4128768, -- 4 MiB file budget less 64 KiB syntax margin
+    POSITION_STORE_WARN_BYTES      = 8388608,  -- 8 MiB
+    POSITION_STORE_CRITICAL_BYTES  = 9437184,  -- 9 MiB
+    POSITION_STORE_MAX_BYTES       = 10420224, -- 10 MiB file budget less 64 KiB syntax margin
     POSITION_MISSING_WARN_SAMPLES  = 10,
 
     -- -----------------------------------------------------------------

@@ -474,7 +474,7 @@ Validate before or during decoding:
 | Percentage values | 0 through 1,000, or exactly 1,295 |
 | Maximum values | 0 through 60,466,174, or exactly 60,466,175 |
 | Resource type | 0 through 34, or exactly 35 |
-| Encoded content | At most 4,128,768 bytes |
+| Encoded content | At most 10,420,224 bytes |
 
 Recommended GUID matching is ASCII case-insensitive because combat-log GUID
 hexadecimal casing can vary. Do not parse GUIDs through a JavaScript number or
@@ -583,10 +583,10 @@ encoded stream order, not an addon session ID, define association.
 The addon uses these thresholds:
 
 ```text
-warning           = 3,145,728 encoded bytes (3 MiB)
-critical warning  = 3,670,016 encoded bytes (3.5 MiB)
-hard encoded cap  = 4,128,768 bytes
-file budget       = 4,194,304 bytes (4 MiB)
+warning           = 8,388,608 encoded bytes (8 MiB)
+critical warning  = 9,437,184 encoded bytes (9 MiB)
+hard encoded cap  = 10,420,224 bytes
+file budget       = 10,485,760 bytes (10 MiB)
 reserved margin   = 65,536 bytes
 ```
 
