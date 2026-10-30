@@ -500,10 +500,14 @@ Existing `b36-v1` and `b36-v2` payloads are preserved unchanged and block new
 capture until uploaded by compatible tooling or explicitly cleared by the user.
 They must not be reinterpreted as `b36-v3` or migrated by guessing floors.
 
-The account-wide table is uploaded beside `WoWCombatLog.txt` after WoW exits.
-After both files upload successfully, the desktop application deletes the combat
-log and removes only the `position_payload` key from the SavedVariables file.
-The addon recreates an empty payload on the next login.
+The complete account-wide Sidekick SavedVariables file is an upload spool. Every
+value persisted in `ChronicleSidekickBridgeWoTLKDB` is uploaded beside
+`WoWCombatLog.txt` after WoW exits. After the server accepts the combined upload,
+the desktop application deletes the complete
+`ChronicleSidekickBridgeWoTLK.lua` file and its `.lua.bak` backup when present,
+then deletes the combat log. The combat log is deleted last so a failed spool
+cleanup leaves both primary artifacts available for retry. The Sidekick addon
+creates a fresh database on the next WoW launch.
 
 Capture runs once per second only while both `LoggingCombat()` and
 `UnitAffectingCombat("player")` are true. Each tick contains one epoch timestamp,

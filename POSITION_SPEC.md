@@ -10,47 +10,50 @@ the same closed WoW installation.
 
 ## 1. Lifecycle and ownership
 
-The addon writes one account-wide value owned by the optional
-ChronicleSidekickBridgeWoTLK addon:
+The optional ChronicleSidekickBridgeWoTLK addon owns one account-wide
+SavedVariables file. The entire file is an upload spool: every persisted value
+in `ChronicleSidekickBridgeWoTLKDB` is intended to accompany the corresponding
+combat log. Position telemetry currently lives at:
 
 ```lua
 ChronicleSidekickBridgeWoTLKDB.position_payload
 ```
 
-The value is append-only across characters and WoW login sessions until a
-successful desktop upload resets it, or the user confirms **Clear positions** in
-settings or via `/clog positions clear`. There are no upload batches,
-per-session acknowledgments, or persisted Chronicle session IDs.
+The spool is append-only across characters and WoW login sessions until a
+successful desktop upload deletes it. The user may discard only position history
+in game through **Clear positions** or `/clog positions clear`. There are no
+upload batches, per-session acknowledgments, or persisted Chronicle session IDs.
 
 The desktop application must:
 
-1. Wait until WoW has exited and the SavedVariables file is stable.
-2. Read `WoWCombatLog.txt` and
-   `ChronicleSidekickBridgeWoTLKDB.position_payload`.
-3. Upload both as one logical Chronicle upload.
+1. Wait until WoW has exited and both files are stable.
+2. Read `WoWCombatLog.txt` and the complete Sidekick SavedVariables file.
+3. Parse the SavedVariables file as data and upload a typed mirror of the complete
+   `ChronicleSidekickBridgeWoTLKDB` table beside the combat log as one logical
+   Chronicle upload.
 4. Wait for a successful server response.
-5. Atomically rewrite the SavedVariables file, removing only
-   `ChronicleSidekickBridgeWoTLKDB.position_payload` and preserving every
-   unrelated key.
-6. Delete the uploaded combat log only after the SavedVariables replacement
+5. Delete the complete `ChronicleSidekickBridgeWoTLK.lua` spool file and its
+   `.lua.bak` backup when present.
+6. Delete the uploaded combat log only after the Sidekick spool deletion
    succeeds.
 
 The two local files cannot be deleted atomically together. This ordering ensures
-that upload failure or SavedVariables rewrite failure leaves both artifacts
-intact. If combat-log deletion fails after the payload was removed, the desktop
-app must record cleanup as pending and retry deletion without creating another
-server upload. Server idempotency remains the final duplicate-upload safeguard.
+that upload failure or Sidekick spool deletion failure leaves both primary
+artifacts intact for retry. If combat-log deletion fails after the Sidekick spool
+was deleted, the desktop app must record cleanup as pending and retry log
+deletion without creating another server upload. Server idempotency remains the
+final duplicate-upload safeguard.
 
-The desktop app should parse the SavedVariables Lua file as data and send a JSON
-(or equivalent typed) mirror of `position_payload`. Neither the desktop app nor
-the server should evaluate arbitrary Lua source. The usual on-disk source is:
+Neither the desktop app nor the server should evaluate arbitrary Lua source. The
+usual on-disk spool is:
 
 ```text
 WTF/Account/<account>/SavedVariables/ChronicleSidekickBridgeWoTLK.lua
 ```
 
-The exact multipart field names and authentication scheme remain outside this
-specification.
+After deletion, ChronicleSidekickBridgeWoTLK creates a fresh database on the next
+WoW launch. The exact multipart field names and authentication scheme remain
+outside this specification.
 
 Schema version 3 is not an in-place reinterpretation of versions 1 or 2. Existing
 `b36-v1` and `b36-v2` payloads are preserved unchanged and block new capture until
