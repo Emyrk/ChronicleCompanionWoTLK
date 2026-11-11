@@ -2,6 +2,8 @@ local suites = {
     "Test/Timestamp.lua",
     "Test/Logger.lua",
     "Test/Config.lua",
+    "Test/TalentScan.lua",
+    "Test/PlayerListProvider.lua",
     "Test/PositionStore.lua",
     "Test/PositionTelemetry.lua",
     "Test/SettingsUI.lua",
