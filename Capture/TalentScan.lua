@@ -11,30 +11,33 @@
 -- where each tab's portion is the concatenation of every talent's current
 -- rank digit in talent-index order (including 0 for unspent).
 --
--- Buffer-race defense: for inspected units, validates that the returned
--- talent tab names match the expected class.  Returns nil + warning on
--- mismatch (another addon clobbered the global inspect buffer).
+-- Buffer-race defense: for inspected units, validates the locale-independent
+-- talent background asset against the expected class. Returns nil on known
+-- cross-class or incomplete data (another addon clobbered the inspect buffer).
 -- =============================================================================
 
 local Log = Chronicle.Logger
 local Capture = Chronicle.Capture
 
 -- ---------------------------------------------------------------------------
--- Class -> expected talent tab names (English, matches 3.3.5 data)
--- Used for inspect-buffer-race detection.
+-- Class -> TalentTab.dbc background prefix.
+--
+-- GetTalentTabInfo display names are localized, but stock 3.3.5 FrameXML uses
+-- the fourth return value to load Interface\\TalentFrame\\<background>-*. The
+-- DBC background values keep a stable class prefix across all three trees.
 -- ---------------------------------------------------------------------------
 
-local CLASS_TAB_NAMES = {
-    WARRIOR     = { "Arms", "Fury", "Protection" },
-    PALADIN     = { "Holy", "Protection", "Retribution" },
-    HUNTER      = { "Beast Mastery", "Marksmanship", "Survival" },
-    ROGUE       = { "Assassination", "Combat", "Subtlety" },
-    PRIEST      = { "Discipline", "Holy", "Shadow" },
-    DEATHKNIGHT = { "Blood", "Frost", "Unholy" },
-    SHAMAN      = { "Elemental", "Enhancement", "Restoration" },
-    MAGE        = { "Arcane", "Fire", "Frost" },
-    WARLOCK     = { "Affliction", "Demonology", "Destruction" },
-    DRUID       = { "Balance", "Feral Combat", "Restoration" },
+local CLASS_BACKGROUND_PREFIX = {
+    WARRIOR     = "Warrior",
+    PALADIN     = "Paladin",
+    HUNTER      = "Hunter",
+    ROGUE       = "Rogue",
+    PRIEST      = "Priest",
+    DEATHKNIGHT = "DeathKnight",
+    SHAMAN      = "Shaman",
+    MAGE        = "Mage",
+    WARLOCK     = "Warlock",
+    DRUID       = "Druid",
 }
 
 -- Feature-test dual-spec C-APIs (added in 3.1.0, pure C-side, not in FrameXML)
@@ -48,7 +51,7 @@ local hasNumTalentGroups   = type(GetNumTalentGroups)   == "function"
 --- Read talent data for one spec group.
 -- @param isInspect  boolean  true when reading an inspected unit's buffer
 -- @param group      number   talent group index (1 or 2), or nil to omit the arg
--- @return table { tabs = { [1..3] = { name, icon, points, talents } }, rank_string }
+-- @return table { tabs = { [1..3] = { name, icon, background, points, talents } }, rank_string }
 local function readGroup(isInspect, group)
     local numTabs = GetNumTalentTabs(isInspect) or 3
     local tabs = {}
@@ -56,11 +59,13 @@ local function readGroup(isInspect, group)
 
     for tab = 1, numTabs do
         -- GetTalentTabInfo: (tab, isInspect, isPet, [group])
-        local tabName, tabIcon, tabPoints
+        local tabName, tabIcon, tabPoints, tabBackground
         if group then
-            tabName, tabIcon, tabPoints = GetTalentTabInfo(tab, isInspect, false, group)
+            tabName, tabIcon, tabPoints, tabBackground =
+                GetTalentTabInfo(tab, isInspect, false, group)
         else
-            tabName, tabIcon, tabPoints = GetTalentTabInfo(tab, isInspect, false)
+            tabName, tabIcon, tabPoints, tabBackground =
+                GetTalentTabInfo(tab, isInspect, false)
         end
 
         local numTalents = GetNumTalents(tab, isInspect) or 0
@@ -91,10 +96,11 @@ local function readGroup(isInspect, group)
         end
 
         tabs[tab] = {
-            name    = tabName or ("Tab" .. tab),
-            icon    = tabIcon or "",
-            points  = tabPoints or 0,
-            talents = talents,
+            name       = tabName or ("Tab" .. tab),
+            icon       = tabIcon or "",
+            background = tabBackground or "",
+            points     = tabPoints or 0,
+            talents    = talents,
         }
         rankParts[tab] = table.concat(rankDigits, "")
     end
@@ -109,18 +115,40 @@ end
 -- Buffer-race validation
 -- ---------------------------------------------------------------------------
 
-local function validateTabNames(tabs, unit)
+local function backgroundClass(background)
+    for classToken, prefix in pairs(CLASS_BACKGROUND_PREFIX) do
+        if background:sub(1, #prefix) == prefix then
+            return classToken
+        end
+    end
+    return nil
+end
+
+local function validateTabBackgrounds(tabs, unit)
     local _, classToken = UnitClass(unit)
     if not classToken then return true end  -- can't validate without class
 
-    local expected = CLASS_TAB_NAMES[classToken]
-    if not expected then return true end  -- unknown class, skip validation
+    local expectedPrefix = CLASS_BACKGROUND_PREFIX[classToken]
+    if not expectedPrefix then return true end  -- unknown class, skip validation
 
     for i = 1, 3 do
-        if tabs[i] and expected[i] and tabs[i].name ~= expected[i] then
-            Log:Debug("TalentScan: buffer race for %s -- expected '%s', got '%s' (will retry)",
-                tostring(unit), expected[i], tostring(tabs[i].name))
+        local background = tabs[i] and tabs[i].background or ""
+        if background == "" then
+            Log:Debug("TalentScan: incomplete inspect data for %s -- tab %d has no background (will retry)",
+                tostring(unit), i)
             return false
+        end
+
+        if background:sub(1, #expectedPrefix) ~= expectedPrefix then
+            local actualClass = backgroundClass(background)
+            if actualClass then
+                Log:Debug("TalentScan: buffer race for %s -- expected %s background, got %s (will retry)",
+                    tostring(unit), expectedPrefix, tostring(background))
+                return false
+            end
+            -- Custom clients may use different asset names. Unknown non-empty
+            -- backgrounds cannot prove a race, so accept them rather than
+            -- dropping localized talent data.
         end
     end
     return true
@@ -184,7 +212,7 @@ function Capture.ScanTalents(unit, isInspect)
 
         if groupData then
             -- Buffer-race check for inspected units
-            if isInspect and not validateTabNames(groupData.tabs, unit) then
+            if isInspect and not validateTabBackgrounds(groupData.tabs, unit) then
                 return nil
             end
             result.groups[g] = groupData

@@ -183,8 +183,10 @@ local function formatSegment(pl, key)
         local isInspect = not isSelf
         local talents = Capture.ScanTalents(unit, isInspect)
         if not talents and isInspect then
-            -- Buffer race -- invalidate cache so we re-inspect next Poll
+            -- Buffer race -- invalidate cache and keep this segment dirty so
+            -- Poll() re-inspects instead of treating talents as optional data.
             inspectedGuids[pl.guid] = nil
+            return nil, true
         end
         return Format.Talents(talents)
 
